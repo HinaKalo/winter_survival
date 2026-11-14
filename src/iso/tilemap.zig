@@ -16,6 +16,8 @@ pub const TileDef = struct {
     @"opaque": bool = false,
     tag: u8 = 0,
     side_cap: u16 = 0xFFFF,
+    /// 最下面一段（level 0–1）侧面的图集格；0xFFFF = 同 `side`。用于外观模式的门/窗列（M2-PLAN §5.1）。
+    side_base: u16 = 0xFFFF,
 };
 pub const Flag = struct {
     pub const blocked: u8 = 1;
