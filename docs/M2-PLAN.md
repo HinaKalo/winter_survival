@@ -73,11 +73,11 @@ return {
 | X3 | tilemap flags/tag/块脏 + `pathfind.zig` | sonnet | — | `tilemap.zig`、`pathfind.zig` | A5 tilemap、pathfind |
 | X13 | 音频环境层 | haiku | — | `audio.zig`、`lua_audio.zig`、`assets.py` | ENGINE-PLAN X13 |
 | P1 | 最终尺寸占位美术（见 §2.3） | haiku | — | `tools/gen_assets.py`、`assets_src/art.json` | `assets.py check` 过；尺寸、格位、透明规则符合 ART-AUDIO §4.1/§5.4 |
-| L1 | `data/legend.lua`、`data/tiles.lua`、两份测试模板（WORLD 的 suburb_house A；64×64 室外街区，含 6 级外墙房屋 4 栋） | haiku | — | `data/` | 模板行等长、字母都有定义（luatest） |
+| L1 | `data/tiles.lua`（材质名 → 图集格号，ART-AUDIO §4.2）、两份测试模板（WORLD 的 suburb_house A 原样照抄；64×64 室外街区，含 6 级外墙房屋 4 栋）。**图例用 M3 的 `data/legend.lua`**（`#` 墙、`=` 内墙、`.` 室内地面、`,` 室外地面、`+` 内门、`D` 外门、`w` 窗、空格 void，字母留给道具）；材质由模板的 `floor`/`wall` 字段和 `data/tiles.lua` 决定，不编进图例符号 | haiku | M3 的 layout 提交 | `data/` | 模板行等长、字母都有定义；两份模板都能被 `core/layout.lua` 解析出预期的房间数（luatest） |
 | X4 | `vision.zig` | sonnet | X3 | | A5 vision |
 | X7 | `world.zig` 代数 id、字段、pick、path 256 | sonnet | X3 | | A5 world |
 | L2 | `view/facing.lua` + 单测（ART-AUDIO §5.6；轴向→斜向映射对照 `world.zig` 的 `last_move` 与 `camera.zig` 的 yaw 推导，写进测试注释，PLAN §10 A2） | sonnet | X2 | `view/facing.lua`、`tests/lua/test_facing.lua` | 8 个移动方向 + 滞回 + 帧号公式全覆盖 |
-| L3 | `core/layout.lua`（纯：模板解析、图例合并、内外墙判定、房间划分（被墙和门隔开的连通区域）、每个房间的格数/外墙段数/窗/门/相邻房间）+ `view/mapbuild.lua` 的 `plan()`（纯，在 layout 结果上加高度、屋顶、模式规则） | sonnet | L1 | | luatest：两种模式的墙高、内外墙判定、门窗 flags、屋顶范围、void、房间划分；同输入输出逐字节相同。`core/layout.lua` 同时供 M3 的 `sim/home.lua`、`sim/thermal.lua` 使用（sim 不能 require view），所以它不得 require `view/` 或引擎库 |
+| L3 | `view/mapbuild.lua` 的 `plan()`（纯）：在 `core/layout.lua` 的输出上加高度、屋顶、两种模式的规则、材质→图集格号。**`core/layout.lua` 和 `data/legend.lua` 由 M3 分支实现**（见 `M3-PLAN.md §1、§3`，输出结构以那里为准），M2 先合入 M3 单独提交的这两个文件再开工，不得另写一份解析 | sonnet | L1、M3 的 layout 提交 | | luatest：两种模式的墙高、门窗 flags、屋顶范围、void；同输入输出逐字节相同；不 require 引擎库 |
 | X5 | `lightmap.zig` | sonnet | X4 | | A5 lightmap |
 | X6 | `tilemesh.zig` + `overlay.zig` | sonnet | X5 | | A5 两组 |
 | X8 | `render.zig` 分块/覆盖层/精灵 + `engine.zig` 胶水 | sonnet | X2, X6, X7 | | ENGINE-PLAN X8；A7.1 第 1–3 条的自检与计数器 |
@@ -86,7 +86,7 @@ return {
 | D1 | 开发演示 `scenes/m2_demo.lua`（`--script` 或开发菜单进入）：街区图 / 剖面房屋切换、昼夜时间滑块、一个带视锥的巡逻 NPC、可控角色点击寻路 | sonnet | L4 | | 三种输入可操作；截图 |
 | X18 | 探针 `engine_ext.lua`（ENGINE-PLAN X18：每个新 `iso` 函数的 NaN/Inf/越界模糊测试）+ `m2_map.lua`（G2、G4 的断言） | haiku | X9, L4 | `tests/probe/` | 两个探针全过 |
 
-并行波次：①S0、S1、X2、X3、X13、P1、L1 → ②X4、X7、L2、L3 → ③X5 → ④X6 → ⑤X8 → ⑥X9 → ⑦L4 → ⑧D1、X18 → 主代理验收。
+并行波次：①S0、S1、X2、X3、X13、P1 → ②X4、X7、L2；合入 M3 的 layout 提交后做 L1、L3 → ③X5 → ④X6 → ⑤X8 → ⑥X9 → ⑦L4 → ⑧D1、X18 → 主代理验收。
 
 冲突控制：`src/iso/tests.zig`、`src/kit/tests.zig`、`build.zig`、`README.md` 是共享文件，同一波次的子代理只允许在这些文件里**追加自己那一行**，不得改动其它行。
 

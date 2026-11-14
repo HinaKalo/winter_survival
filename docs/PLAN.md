@@ -29,6 +29,8 @@
 | `docs/ART-AUDIO.md` | 美术与音频规格：色卡、尺寸、人物生成器、资产清单、音频清单 | 美术与音频管线 |
 | `docs/ENGINE-PLAN.md` | 引擎扩展设计（Zig 侧）：接口、Lua API、单元测试、子任务 X1–X18 | Zig 实现者 |
 | `docs/ENGINE-BASE.md` | 脚手架继承的 iso-base 引擎原始计划（现有 Zig 代码的出处） | Zig 实现者 |
+| `docs/M2-PLAN.md`、`docs/M3-PLAN.md` | M2、M3 的实施计划 | 对应里程碑的实现者 |
+| `docs/PARALLEL-PLAN.md` | M4 起的并行开发：P0 接口冻结、契约 C1–C9、各线范围与文件归属、共享文件与合并规则 | 所有并行线；开新工作树前必读 |
 | `docs/CI-PLAN.md` | Jenkins 流水线 | CI 维护 |
 
 文中 §N 指本文章节；跨文档引用写作 `GDD §1.9`、`NARRATIVE §2.4`、`ENGINE-PLAN §A3` 等。
