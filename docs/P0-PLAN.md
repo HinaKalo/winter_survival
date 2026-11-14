@@ -518,3 +518,4 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 ### 9.7 P0-0 验收第 2 轮（2026-11-14）
 
 返工 309685c，CI #13（quick）558/558，luatest 231/231。OpenCode（anthropic/claude-sonnet-5-5#high）复审 PASS：R1、R2 修复完整。新增 P3（不阻塞，记技术债，与 R4 同类）：`src/kit/sys.zig` 遍历子目录时原生分配失败提前返回，`Walker.deinit` 可能不关闭栈上的子目录句柄。R1 的“遍历中途出错 / 分配失败”两条路径无法稳定构造，仍只有代码审查证据（同 §9.2）。
+| 旧存档绑定 | P0-3 改了默认键，M2 存下的 `settings.sav` 绑定会带回旧冲突。`export_bindings` 写入 `version = input.BINDINGS_VERSION`（2）；无版本或版本 < 2 的绑定不导入（`import_bindings` 返回 `false, "outdated"`），沿用新默认。测试 `test_input_actions.old_saved_bindings_are_not_imported` |

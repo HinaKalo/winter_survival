@@ -431,6 +431,37 @@ function T.rebind_keeps_hold_and_export_format()
   input.reset_all()
 end
 
+-- P0-PLAN §9.4: bindings saved before P0-3 (no version / version 1) used the old defaults, which now
+-- conflict. export_bindings() carries `version = input.BINDINGS_VERSION` (2); import_bindings() of an older
+-- or missing version keeps the defaults and returns false, "outdated".
+function T.old_saved_bindings_are_not_imported()
+  input.reset_all()
+  assert(input.BINDINGS_VERSION == 2)
+  local ex = input.export_bindings()
+  assert(ex.version == 2, "export carries the bindings version")
+  -- an M2-era export: no version, intimidate on LT+Y, page on LB/RB
+  local old = { keyboard = {}, mouse = {}, pad = {
+    intimidate = { [1] = { btn = PB.y, lt = true } },
+    ui_page_prev = { [1] = { btn = PB.lb } },
+    ui_page_next = { [1] = { btn = PB.rb } },
+  } }
+  local ok, err = input.import_bindings(old)
+  assert(ok == false and err == "outdated", "unversioned bindings rejected: " .. tostring(err))
+  assert(is_pad(pdb("intimidate"), PB.y) and cases_mod.is_hold(input, "intimidate", "pad"), "defaults kept")
+  old.version = 1
+  ok, err = input.import_bindings(old)
+  assert(ok == false and err == "outdated")
+  -- current-version round trip still works
+  assert(input.set_binding("keyboard", "interact", 1, { key = K.U }))
+  local cur_ex = input.export_bindings()
+  input.reset_all()
+  assert(input.import_bindings(cur_ex) ~= false)
+  assert(is_kb(kbb("interact"), K.U), "current-version import applies")
+  input.reset_all()
+  local okv = input.validate()
+  assert(okv)
+end
+
 -- ---------------------------------------------------------------- text
 
 function T.i18n_keys_exist()
