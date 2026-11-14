@@ -12,4 +12,5 @@ test {
     std.testing.refAllDecls(@import("overlay.zig"));
     std.testing.refAllDecls(@import("world.zig"));
     std.testing.refAllDecls(@import("vm.zig"));
+    _ = @import("model_accept_test.zig");
 }
