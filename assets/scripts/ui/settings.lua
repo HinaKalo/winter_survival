@@ -55,7 +55,8 @@ function M.apply(s)
     pad.set_tuning(s.input_pad.deadzone, 0.12, s.input_pad.trigger, math.max(0.1, s.input_pad.trigger - 0.1))
   end
   if s.bindings then
-    input.import_bindings(s.bindings)
+    local ok = input.import_bindings(s.bindings)
+    if not ok then s.bindings = nil end
   end
   input.set_hold_s(s.accessibility.hold_duration)
 end

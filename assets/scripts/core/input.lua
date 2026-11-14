@@ -8,6 +8,7 @@ local PB = pad_buttons or {}
 local PA = pad_axes or {}
 
 local M = {
+  BINDINGS_VERSION = 2, -- saved bindings older than this are not imported (P0-PLAN §9.4)
   -- [device][action_id] = { [1] = primary, [2] = secondary }; actions with `named_slots` for a device (move_dir on
   -- keyboard) instead use { up =, left =, down =, right = }.
   bindings = {},
@@ -537,13 +538,17 @@ function M.format_binding(device, b)
 end
 
 function M.export_bindings()
-  return util.deep_copy(M.bindings)
+  local out = util.deep_copy(M.bindings)
+  out.version = M.BINDINGS_VERSION
+  return out
 end
 
+--- Returns true, or false, "outdated" (missing / older version: defaults kept) or false, "invalid".
 function M.import_bindings(tbl)
   M.reset_all()
   invalidate()
-  if type(tbl) ~= "table" then return end
+  if type(tbl) ~= "table" then return false, "invalid" end
+  if type(tbl.version) ~= "number" or tbl.version < M.BINDINGS_VERSION then return false, "outdated" end
   for _, dev in ipairs({ "keyboard", "mouse", "pad" }) do
     if type(tbl[dev]) == "table" then
       for act_id, slots in pairs(tbl[dev]) do
@@ -556,7 +561,9 @@ function M.import_bindings(tbl)
   end
   if not M.validate() then
     M.reset_all()
+    return false, "invalid"
   end
+  return true
 end
 
 -- ------------------------------------------------------------------ Runtime queries
