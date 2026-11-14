@@ -47,6 +47,9 @@ function M.load_settings(defaults)
       end
     end
   end
+  if type(data.bindings) == "table" then
+    out.bindings = util.deep_copy(data.bindings)
+  end
   return out, true
 end
 
