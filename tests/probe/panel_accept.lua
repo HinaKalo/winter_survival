@@ -1,5 +1,5 @@
 -- 验收测试，编码代理不得修改（PANEL 第 2 次返工，主代理编写；见 docs/PANEL-PLAN.md §9）。
--- One scenario per Codex finding P1..P10 on the PANEL widgets (2026-11-14). Needs the probe binding
+-- One scenario per Codex finding P1..P10 on the PANEL widgets (2026-11-14), P11 from the final review. Needs the probe binding
 -- probe.mouse_button(button, down) to hold a mouse button across frames.
 local probe = require("kit_probe")
 local scene = require("core.scene")
@@ -33,7 +33,8 @@ local function reset()
   Ctx.bg_clicks, Ctx.bg_ret = 0, 0
   Ctx.results = {}
   Ctx.want = {}
-  Ctx.s_val, Ctx.s_enabled = 5, true
+  Ctx.s_val, Ctx.s_enabled, Ctx.s_max = 5, true, 20
+  Ctx.shrink_on_pending = false
   Ctx.kb_ret = 0
   Ctx.events = {}
   Ctx.panel_cancel = 0
@@ -62,7 +63,10 @@ function Ctx:draw()
       Ctx.bg_ret = Ctx.bg_ret + 1
     end
   elseif m == "stepper" then
-    local v = widgets.stepper("acc_step", { x = 24, y = 24, w = 320, h = 40 }, Ctx.s_val, 0, 20, 1, { enabled = Ctx.s_enabled })
+    -- P11: the draw that consumes a parked keyboard edit sees a smaller range
+    local st = widgets._steppers and widgets._steppers["acc_step"]
+    if Ctx.shrink_on_pending and st and st.pending ~= nil then Ctx.s_max = 5 end
+    local v = widgets.stepper("acc_step", { x = 24, y = 24, w = 320, h = 40 }, Ctx.s_val, 0, Ctx.s_max, 1, { enabled = Ctx.s_enabled })
     Ctx.s_val = v
   elseif m == "grid" then
     local _, ev = widgets.item_grid("acc_grid", { x = 24, y = 24 }, 4, 1, GRID_ITEMS, 1, {})
@@ -272,6 +276,19 @@ local function p10_list_tooltip_reentry_delay()
     widgets._tt_drawn_id ~= "acc_list#row1#tip")
 end
 
+-- P11: a parked keyboard edit is re-clamped to the bounds of the call that returns it
+local function p11_stepper_pending_respects_current_bounds()
+  reset(); Ctx.mode = "stepper"; Ctx.shrink_on_pending = true
+  wait(0.15)
+  focus.set_target("acc"); focus.set_focus("acc_step"); focus.clear_target()
+  frames(2)
+  probe.tap(keys.RIGHT)
+  wait(0.2)
+  probe.check("P11: the range shrank while an edit was parked", Ctx.s_max == 5)
+  probe.check("P11: Stepper never returns a value above the current max (got " .. tostring(Ctx.s_val) .. ")",
+    Ctx.s_val == 5)
+end
+
 local function scenario()
   wait(0.2)
   scene.push(Ctx)
@@ -286,6 +303,7 @@ local function scenario()
   p8_grid_disabled_item_mouse()
   p9_stepper_disable_stops_repeat()
   p10_list_tooltip_reentry_delay()
+  p11_stepper_pending_respects_current_bounds()
   Ctx.mode = nil
   scene.pop()
   wait(0.1)

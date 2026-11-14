@@ -1654,21 +1654,25 @@ function M.stepper(id, rect, value, min_v, max_v, step, opts)
   -- st.pending and merged into the return value of this call (same pattern as
   -- ItemGrid's pending_event). on_change already fired for them; do not repeat it
   -- through `changed`.
-  if st.pending ~= nil then
-    local pv = st.pending
-    st.pending = nil
-    if enabled_now and math.abs(pv - value) > 1e-6 then
-      value = pv
-      changed = not opts.on_change
-    end
-  end
-
-  local from_dir = false
   local function clamp(v)
     v = math.max(min_v, math.min(max_v, v))
     if step > 0 then v = min_v + math.floor((v - min_v) / step + 0.5) * step end
     return math.max(min_v, math.min(max_v, v))
   end
+  if st.pending ~= nil then
+    -- The edit was clamped against the previous call's range; re-clamp and snap it
+    -- against this call's arguments so the returned value is always in range.
+    local raw = st.pending
+    st.pending = nil
+    local pv = clamp(raw)
+    if enabled_now and math.abs(pv - value) > 1e-6 then
+      value = pv
+      changed = not opts.on_change
+      if opts.on_change and math.abs(pv - raw) > 1e-6 then opts.on_change(pv) end
+    end
+  end
+
+  local from_dir = false
   local function setv(nv)
     nv = clamp(nv)
     if math.abs(nv - value) > 1e-6 then
