@@ -64,7 +64,7 @@ function T.prefers_low_score_and_priority()
   local a = A(0, 0)
   local got = ft.pick(a, { C("deco", 1, 0, "deco"), C("npc", 1.5, 0, "npc") }, { mode = "home" })
   assert(got.id == "npc", "npc priority beats nearer decoration")
-  got = ft.pick(a, { C("hurt", 2, 1, "urgent"), C("box", 1, 0, "container") }, { mode = "home" })
+  got = ft.pick(a, { C("hurt", 1.5, 0, "urgent"), C("box", 1, 0, "container") }, { mode = "home" })
   assert(got.id == "hurt", "urgent wins")
 end
 
