@@ -301,6 +301,9 @@ function M.act(s, cid, action_id)
     ok, err = run(state, { kind = "needs.sleep", char = cid })
   elseif entry.kind == "wake" then
     ok, err = run(state, { kind = "needs.wake", char = cid })
+    if ok and state.party.chars[cid].job then
+      ok, err = run(state, { kind = "home.set_activity", char = cid, value = "work" })
+    end
   elseif entry.kind == "toggle" then
     local sid = action_id:sub(8)
     ok, err = run(state, { kind = "home.toggle", station = sid, on = not state.home.stations[sid].on })
