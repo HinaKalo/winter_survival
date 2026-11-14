@@ -177,3 +177,13 @@ home3d.visibility(names, view_floor, state) -> { [name] = bool }
 | W3 | 数据 / 模拟 / 会话 / `floors` / `home3d` / 场景 / HUD / 输入 | coder-sonnet | W2 接口（按 §3 冻结契约并行开发，最后合并） |
 
 以后：修复后的家具变体（`<节点>_patched`），外观“勉强可用”：补丁、绑绳、拼凑的木板，不能是新的；由 `home3d` 按站点 hp 和修理状态切换。
+
+## 9. 审查遗留（P3 backlog）
+
+- `model_info` 以 struct 返回，Debug 构建每次调用打印 binder 警告“pushing a struct that is not a bound type”（只是日志噪声）。
+- `model_nodes` 对未加载的 id 返回空表（计划写 nil）；超过 4096 个节点会静默截断（当前 193 个）。
+- `model_bake.py`：非三角形图元（strip / fan）静默跳过；有符号索引没有负数检查；极大坐标的 f32 打包会抛未捕获的 OverflowError。
+- 光照图任一格变化都会整模型重建上传；灯光逐帧闪烁时可能有帧耗时问题（需要时改为分块）。
+- 旧存档（M5 之前，没有 floor / ground 字段）加载后没有迁移。
+- 测试覆盖待补：自发光 a=128 的渲染分支、重建规则（models_rebuilt_last）、offset 实际平移几何、world_clear 不卸载 / resetState 清空、烘焙的父子层级、负行列式绕序、matrix 节点、u8/u32 索引。
+- 修复后的家具变体（`_patched`，勉强可用的外观）：建模 + `home3d` 切换规则。
