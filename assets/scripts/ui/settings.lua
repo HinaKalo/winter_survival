@@ -120,6 +120,7 @@ end
 function M:draw()
   if not M.data then M.load() end
   local s = M.data
+  focus.set_target("settings")
   widgets.modal_dim()
 
   local sw, sh = ui.screen_size()
@@ -374,6 +375,7 @@ function M:draw()
       end,
     })
   end
+  focus.clear_target()
 end
 
 return M
