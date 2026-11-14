@@ -9,15 +9,15 @@ return {
   ["title.stub_notice"] = "이후 마일스톤에서 구현됩니다",
 
   ["ui.back"] = "뒤로",
-  ["ui.ok"] = "확인",
+  ["ui.ok"] = "확인",  -- i18n:keep
   ["ui.cancel"] = "취소",
   ["ui.confirm"] = "확정",
   ["ui.reset_default"] = "기본값 복원",
-  ["ui.reset_all"] = "모두 복원",
+  ["ui.reset_all"] = "모두 복원",  -- i18n:keep
   ["ui.on"] = "켜짐",
   ["ui.off"] = "꺼짐",
-  ["ui.close"] = "닫기",
-  ["ui.none"] = "—",
+  ["ui.close"] = "닫기",  -- i18n:keep
+  ["ui.none"] = "—",  -- i18n:keep
 
   ["settings.title"] = "설정",
   ["settings.tab.lang"] = "언어",

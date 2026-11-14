@@ -9,15 +9,15 @@ return {
   ["title.stub_notice"] = "该功能将在后续版本开放",
 
   ["ui.back"] = "返回",
-  ["ui.ok"] = "确定",
+  ["ui.ok"] = "确定",  -- i18n:keep
   ["ui.cancel"] = "取消",
   ["ui.confirm"] = "确认",
   ["ui.reset_default"] = "恢复默认",
-  ["ui.reset_all"] = "全部恢复默认",
+  ["ui.reset_all"] = "全部恢复默认",  -- i18n:keep
   ["ui.on"] = "开",
   ["ui.off"] = "关",
-  ["ui.close"] = "关闭",
-  ["ui.none"] = "—",
+  ["ui.close"] = "关闭",  -- i18n:keep
+  ["ui.none"] = "—",  -- i18n:keep
 
   ["settings.title"] = "系统设置",
   ["settings.tab.lang"] = "语言",
