@@ -451,6 +451,7 @@ pub fn configure(save_dir: []const u8) void;
 | `pad.rumble(l, r, ms)` → false | v1 预留，不做震动 |
 | `pad.last_button()` / `pad.last_raw()` / `pad.set_mapping(kind, logical, raw_index, invert)` / `pad.reset_mapping()` | 改键与校准。`last_button` 覆盖全部 17 个逻辑按钮，LT/RT 以 `trigger_press` 阈值的数字边沿计入 |
 | `kit_probe.pad_button(b, down)` / `kit_probe.pad_axis(a, v)` | 注入虚拟手柄 |
+| `kit_probe.mouse_button(button, down)` | 跨帧按住 / 松开鼠标键 |
 
 ## A5. 单元测试（`zig build test` 必须覆盖）
 

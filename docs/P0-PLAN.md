@@ -443,3 +443,11 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 | R2 | `--scene` 解析了但 `main.lua` 没读 | 接受（主代理测试漏项） | `test_p0_sys.main_lua_reads_launch_scene` |
 | R3 | `assets/`、`tests/` 下的 junction 可指向仓库外 | 不接受：这两个目录受版本控制，`list_files` 只给本仓库脚本用，没有 mod，不在威胁模型内 | — |
 | R4 | Lua 分配失败 longjmp 时漏释放原生路径表和目录句柄 | 不阻塞合并（P3）：只在 Lua 堆达到 512 MiB 上限时发生，此时游戏已不可用；记入技术债 | — |
+### 9.3 W0 Q13 归档审查（2026-11-14）
+
+实现 ecd17c8（coder-haiku）。Codex FAIL 1 条，裁决：
+
+| 编号 | 问题 | 裁决 | 测试 |
+|---|---|---|---|
+| A1 | `verify_steps.main` 在 zig 不存在 / 没有 `build.zig` 时 `return 2`，不归档 | 不接受：两者是基础设施错误，发生在任何步骤之前，本轮不可能产出报告或夹具 | `test_ci_archive` 注释说明 |
+| A2 | 探针选择失败分支的归档无测试 | 接受（缺测试，实现已覆盖） | `test_ci_archive.test_main_collects_on_probe_selection_error` |

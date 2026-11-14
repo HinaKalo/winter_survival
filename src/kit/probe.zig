@@ -202,6 +202,11 @@ pub fn click(button: i64) void {
     input.onMouseUp(b); // pressed 在本帧 post_draw 才清，just_pressed 当帧可见
 }
 
+pub fn mouse_button(button: i64, down: bool) void {
+    const b = buttonOf(button) orelse return;
+    if (down) input.onMouseDown(b) else input.onMouseUp(b);
+}
+
 pub fn pad_button(b: i64, down: bool) void {
     const u = std.math.cast(u8, b) orelse return;
     const btn = std.enums.fromInt(pad_logic.Button, u) orelse return;

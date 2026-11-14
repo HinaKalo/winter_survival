@@ -10,10 +10,31 @@ local M = {
   _last_mx = nil,
   _last_my = nil,
   _from_dir = {}, -- [id] = last element id we came from
+  -- Set by a widget during draw when it consumes the next cancel press itself
+  -- (e.g. an ItemGrid holding a picked-up item); reset in begin_frame.
+  cancel_capture = false,
+  frame = 0, -- draw frames since start (begin_frame); widgets use it to detect call gaps
 }
 
 local function top_group()
   return M.groups[#M.groups]
+end
+
+local function find_group(id)
+  for i = #M.groups, 1, -1 do
+    if M.groups[i].id == id then return M.groups[i] end
+  end
+  return nil
+end
+
+-- While a modal/panel draws, it owns registration. Without an explicit target,
+-- registrations from screens below a modal are ignored (UI-UX §5.5).
+function M.set_target(group_id)
+  M._target = group_id
+end
+
+function M.clear_target()
+  M._target = nil
 end
 
 function M.push_group(id, opts)
@@ -48,9 +69,19 @@ function M.clear()
   M.groups = {}
   M.current = nil
   M.hover = nil
+  M._target = nil
+end
+
+-- Move focus to `id` and make it the group's remembered element.
+function M.set_focus(id)
+  local g = (M._target and find_group(M._target)) or top_group()
+  M.current = id
+  if g then g.remember = id end
 end
 
 function M.begin_frame()
+  M.frame = M.frame + 1
+  M.cancel_capture = false
   for i = 1, #M.groups do
     M.groups[i].items = {}
     M.groups[i].by_id = {}
@@ -58,7 +89,13 @@ function M.begin_frame()
 end
 
 function M.register(elem)
-  local g = top_group()
+  local g
+  if M._target then
+    g = find_group(M._target)
+  else
+    g = top_group()
+    if g and g.modal then return end
+  end
   if not g then return end
   -- Only top group accepts registrations when modal or active
   if elem.focusable == false then return end
@@ -169,7 +206,7 @@ function M.update(dt)
   local hovered = nil
   for i = #g.items, 1, -1 do
     local it = g.items[i]
-    if point_in(mx, my, it.rect) then
+    if not it.no_hover and point_in(mx, my, it.rect) then
       hovered = it
       break
     end
@@ -220,7 +257,7 @@ function M.update(dt)
   -- Confirm (keyboard/pad)
   if (dev ~= "mouse" or M.visible) and input.pressed("confirm") and cur_elem then
     if cur_elem.enabled == false then
-      kit_audio.sfx("sfx/ui", 0.5, 0.7)
+      kit_audio.sfx("sfx/ui_deny", 0.5, 0.7)
     elseif cur_elem.on_activate then
       kit_audio.sfx("sfx/ui", 0.7, 1.0)
       cur_elem.on_activate()
@@ -228,7 +265,7 @@ function M.update(dt)
   end
 
   -- Cancel (Esc / B / mouse right click)
-  if input.pressed("cancel") and g.on_cancel then
+  if input.pressed("cancel") and g.on_cancel and not M.cancel_capture then
     g.on_cancel()
   end
 end
