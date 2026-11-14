@@ -14,14 +14,8 @@ local function starts_with(value, prefix)
 end
 
 local function file_list(dir)
-  local files = {}
-  local pipe = io.popen("find " .. dir .. " -type f -name '*.lua' | sort")
-  if not pipe then return files end
-  for path in pipe:lines() do
-    files[#files + 1] = path
-  end
-  pipe:close()
-  return files
+  -- Recursive enumeration includes sim/cmd, sim/query and sim/schema when present.
+  return assert(sys.list_files(dir, ".lua"))
 end
 
 local function read_file(path)
