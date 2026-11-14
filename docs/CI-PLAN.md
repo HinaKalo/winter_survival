@@ -132,6 +132,19 @@ tools/ci_verify.sh --gc [DAYS]      # 清理超过 DAYS（默认 7）天的 refs
 5. Windows 只有一个执行器，任务禁止并发，多个构建会排队（full 构建首次需编译依赖，较慢）。日常迭代用 `quick`，合并前用 `full`。若 Windows 代理离线或排队很久，如实报告，不要无限等待。
 6. 用完的快照引用由 `--gc` 清理；不要把 `refs/ci/*` 推到任何远端。
 
+### 7.6 返工 1（Codex 审查，2026-11-14）
+
+验收测试：`tests/tools/test_ci_verify_fix.py`，由主代理编写，编码代理不得修改。
+
+| # | 问题 | 裁定 |
+|---|---|---|
+| C1 | Source 阶段 `assets.py check` / `run_pytests.py` 失败会中止阶段，跳过 stash 与 Windows | 两条命令各自包在 `catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') { sh '...' }` 里，stash 照常执行 |
+| C2 | `--shots` 相对路径在 `cd "$TOP"` 之后失效 | 解析参数后立即把 `--shots` 转成绝对路径（`--out` 已是这样） |
+| C3 | 构建 SUCCESS 但产物解压失败时，脚本因 `set -e` 提前退出 | 解压失败只打印警告（含 "artifact" 字样），继续打印摘要；退出码只由构建结果决定 |
+| C4 | `PROBES` 通配符无匹配时被静默丢弃 | `select_probes` 对无匹配的通配符、以及最终为空的选择抛 `ValueError`（消息里带模式）；`verify_steps.py` 把它记为失败的 JUnit 用例并以非 0 退出 |
+| C5 | 截图 JUnit 的失败文本未过滤 XML 非法控制字符 | 复用 `probe_junit._xml_safe`（或等价函数）过滤 message 与 text |
+| C6 | 截图名重名检查区分大小写，Windows 上会互相覆盖 | 用 `name.lower()` 判重 |
+
 ## 8. 主代理驱动的 TDD 与分支自证（2026-11-14 起，从 P0 开始执行）
 
 M3 两轮审查都没通过，根因有三：一是计划留了空档（燃料预检与实际燃烧的规则不一致）；二是按文件拆分后留下跨模块缺口（审计没查 `wear`）；三是审查者只能手推代码，推断出错。因此从 P0 起改为下列流程：
