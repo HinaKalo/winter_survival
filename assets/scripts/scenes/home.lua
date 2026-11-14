@@ -70,9 +70,27 @@ local function set_hints(name)
 end
 
 -- ------------------------------------------------------------------ world
-local function slot_tile(room, idx)
+-- Anchor of a room. Rooms built during play (cold cell) have no template anchor: they borrow their host's (the
+-- default room on its floor), shifted to its own corner so slots stay walkable and apart from the host's people.
+-- Returns anchor, borrowed.
+local function anchor_of(room)
   local a = anchors[room]
+  if a then return a, false end
+  local st = M.session and M.session.state
+  local rm = st and st.home.rooms[room]
+  if not rm then return nil end
+  for _, l in ipairs(rm.links or {}) do
+    if anchors[l.room] then return anchors[l.room], true end
+  end
+  local def = anchors[st.home.default_room]
+  if def then return def, true end
+  return nil
+end
+
+local function slot_tile(room, idx)
+  local a, borrowed = anchor_of(room)
   if not a then return nil end
+  if borrowed then return a.x + 3 + (idx % 3), a.y - 1 + math.floor(idx / 3) end
   return a.x - 1 + (idx % 4), a.y + 1 + math.floor(idx / 4)
 end
 
@@ -378,6 +396,22 @@ local function sync_actors(dt)
     local want = desired_room(cid)
     if want and a and room_of[cid] ~= want then
       local f, tx, ty = trip_target(want, i)
+      if not tx then
+        -- never drop a move: fall back to the floor's default-room anchor, then the home's
+        local st = M.session.state
+        local def = st.home.default_room
+        local df = floors.of_room(st, def) or "F1"
+        local a = anchors[def]
+        if f ~= df then
+          local best
+          for id in pairs(anchors) do
+            if floors.of_room(st, id) == f and (not best or id < best) then best = id end
+          end
+          a = best and anchors[best] or a
+        end
+        a = a or anchors[def]
+        if a then tx, ty = a.x - 1 + ((i - 1) % 4), a.y + 1 end
+      end
       if tx then
         trips[cid] = { floor = f, tx = tx, ty = ty }
         room_of[cid] = want
