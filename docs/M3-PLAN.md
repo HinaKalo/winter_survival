@@ -173,3 +173,40 @@ timeout 8 ./zig-out/bin/winter_survival --no-audio
 | 浮点跨平台差异 | 不比较不同平台的字节；CI 的确定性断言在同一二进制内做 |
 | M2 的 `core/layout.lua` 与 M3 版本冲突 | M3 只实现纯解析 + 测试；M2 的 `mapbuild.plan` 在其输出上加高度，不重复解析 |
 | 临时 `expedition` 被误当正式设计 | 文件头 `PLACEHOLDER = true`；M5 计划删除并替换为 `worldgen` + `raid_autoresolve`；balance 报告标注 |
+
+## 9. 返工 1（2026-11-14，主代理核验）
+
+验收命令全过（luatest 85/85、balance 第 30 天 4 人存活且确定性一致、两种构建、assets、timeout 8），但三路代码审查均 FAIL。按 CLAUDE.md 进入第 1 次返工。
+
+### 9.1 裁定（子代理照做，不再自行决策）
+
+| 项 | 裁定 |
+|---|---|
+| 效率组合（CONTENT §6.4.3） | 伤势与疾病两类惩罚：只有一项时取该值；多项时取最小一项 × 0.9。其余因子（特长、心理、精力、体温、饥渴、工作台）照乘。止痛药使伤病惩罚减半（`1 - (1-x)/2`） |
+| 载重（§6.4.1） | 轻伤 ×0.9、重伤 ×0.6、肺炎 ×0.7；装备背包后同步更新背包 `kg_cap`/`slots` |
+| 濒死 | 饱食 0 满 72 h、水分 0 满 36 h：hp 夹到 ≤ 10（进入濒死档），不只记 `critical_cause` |
+| 删除无出处机制 | `health` 中“≥45 伤害 25% 夹到 40 hp”删除；抗生素每天最多 1 剂 |
+| 作业与活动 | 只在 `activity == "work"` 且效率 > 0 时推进；睡觉/外出/守夜时暂停并保留 `ch.job`，黎明恢复 `work`；改活动不取消作业；去掉 0.05 下限 |
+| 取消作业 | 只能显式 `cancel_job`；进度 < 1 游戏分钟全额退料，否则不退；研究作业走 `tech.cancel` |
+| `end_day` | 移到 `sim.lua`，用 `sim.step` 逐分钟推进到 19:00，不取消作业；删除 `sleep_until_dawn` |
+| 设施档位（CONTENT §3.1） | `hearth` 配方可用 简易灶/改良灶/柴火炉；`benchN` 配方可用 ≥ N 级工作台；工作台速度只作用于“台” |
+| 机器人 | 删除 `bot.apply_kit` 的直接写状态与 `state._bot_kit`；参考开局物资改由 `sim.new(seed, {kit="bot"})` 在建局时放入，`bot.run` 默认不加料 |
+| 冷格（cold cell） | 双向链接；G 由 `balance.thermal` 与围护统计算，`cold_cell_mult` 生效 |
+| 灶的湿度 | 只在做饭/煮水作业进行中 +1.5/h |
+| 冻伤 | 只在室外判定（照 §6.2.3 文字） |
+| 寒潮日程 | 第 2、3 次寒潮开始日在 13–17、21–24 内用 `rng` 抽取并满足间隔约束；linwei 预报修正照 §6.5.3 |
+| RNG 流 | 接受 `health`、`weather` 两条额外具名流；§2 表格以此为准 |
+| 疾病字段位置 | 保持 `char.health.disease`；死亡时同时设 `dead = true` 与 `status = "dead"` |
+| `layout` 输出 | 照 §3：`rooms[id].cells` 为格子列表（数量用 `area`），删除 `cell_list`；`links` 按 kind 分条（door / wall 各一条）；新增顶层 `props` 列表（含 `room`）；外墙格同时邻接多房间时按 DIRS 顺序取第一个；内墙每对房间都建链接；锚点重复返回 `nil, err`；任何畸形模板返回 `nil, err` 不崩溃 |
+| 台账检查 | balance 与 `test_sim_30d` 每天跑 `state.validate` + 台账/NaN/负数扫描，失败写入 `state.errors`，`ok_all` 依赖它 |
+| 调参占位 | 修完物理后若参考机器人第 30 天全灭，只允许改 §5.1 表里已标注的占位值，并在 §5.1 记录新值 |
+
+### 9.2 分工（文件互不重叠；`data/balance.lua` 只在自己的分节内做小范围编辑，不整体重写）
+
+| # | 代理 | 文件 | 内容 |
+|---|---|---|---|
+| M3-R1 | sonnet | `core/layout.lua`、`sim/home.lua`、`sim/thermal.lua`、`sim/power.lua`、`tests/lua/test_layout.lua`、`test_layering.lua`、`test_sim_thermal.lua`、`test_sim_power.lua`；`balance.lua` 的 `thermal`/`power`/`humidity` 分节 | 审查 A 1–4、B 1–4/13/14（thermal 部分）；layout 契约按 9.1 调整并修好所有使用方；数值测试（G 值、§6.2.4 算例 G≈53.6、柴火炉 0.4/1.0、发电机 0.2+0.5×负载比、充电 85%） |
+| M3-R2 | sonnet | `sim/chars.lua`、`health.lua`、`needs.lua`、`inventory.lua`、`weather.lua` 及对应 `test_sim_*`；`balance.lua` 的 `health`/`needs`/`chars`/`weather` 分节 | 审查 B 5–12、14（除 thermal）、15，A 非阻断 1；全部数值测试 |
+| M3-R3 | sonnet | `sim/state.lua`、`sim.lua`、`commands.lua`、`craft.lua`、`tech.lua`、`bot.lua`、`expedition.lua`、`tests/lua/balance_runner.lua`、`test_sim_state/craft/tech/bot/30d.lua`、删除 `tests/probe/{bot_debug,bot_trace,sim_debug,sim_trace,thermal_debug}.lua`、本文 §4 接口表与代码对齐；`balance.lua` 的 `start_stash`/`bot_kit`/`expedition` 分节 | 审查 C 1–10 与非阻断；§4 表改为实际函数名 |
+
+完成后主代理跑 §7 全部命令；之后统一复审。
