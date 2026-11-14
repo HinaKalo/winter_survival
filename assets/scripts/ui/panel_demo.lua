@@ -4,6 +4,7 @@
 -- Optional env:
 --   PANEL_DEMO_VIEW=main|modal|confirm|radial
 --   PANEL_DEMO_DEVICE=keyboard|mouse|pad
+--   PANEL_DEMO_LARGE=1            (large text mode)
 local iso = require("iso")
 local i18n = require("core.i18n")
 local input = require("core.input")
@@ -59,12 +60,13 @@ end
 
 local function draw_glyph_strip(x, y)
   local f = theme.font("s")
-  widgets.label(f, i18n.t("ui.demo.hintbar"), x, y, 120, theme.colors.text_dim, 0)
+  widgets.label(f, i18n.t("ui.demo.hintbar"), x, y, 160, theme.colors.text_dim, 0)
   local cx = x + 0
-  local cy = y + 18
+  local cy = y + ui.font_line_height(f) + 4
   local specs = {
     glyphs.key("W"), glyphs.key("ENTER"), glyphs.key("ESCAPE"), glyphs.key("TAB"),
-    glyphs.mouse(0), glyphs.mouse(1), glyphs.mouse(2),
+    glyphs.mouse("left"), glyphs.mouse("right"), glyphs.mouse("middle"),
+    glyphs.mouse("move"), glyphs.mouse("drag"),
     glyphs.pad("a"), glyphs.pad("b"), glyphs.pad("x"), glyphs.pad("y"),
     glyphs.pad("lb"), glyphs.pad("rb"), glyphs.pad("lt"), glyphs.pad("rt"),
     glyphs.pad("dpad_up"), glyphs.pad("dpad_left"), glyphs.pad("l3"), glyphs.pad("r3"),
@@ -82,6 +84,8 @@ function _init()
   i18n.init(read_lang())
   input.init()
   theme.init()
+  local large = os.getenv("PANEL_DEMO_LARGE")
+  if large and large ~= "" and large ~= "0" then theme.large_text = true end
   theme.apply_scale()
   hintbar.set_device_override(M.device)
   hintbar.push("raid")
@@ -101,16 +105,19 @@ function _draw()
 
   theme.set_color(theme.colors.bg, 1)
   ui.rect(0, 0, sw, sh)
+  local lab = ui.font_line_height(theme.font("s")) + 4 -- label height; layout scales with large text
+  local title_h = ui.font_line_height(theme.font("t"))
+  local strip_y = 10 + title_h + 2
   theme.set_color(theme.colors.bg_hi, 0.35)
-  ui.rect(0, 0, sw, 96)
+  ui.rect(0, 0, sw, strip_y + lab + 30)
 
-  widgets.label(theme.font("t"), i18n.t("ui.demo.title"), 24, 10, 400, theme.colors.text, 0)
-  local strip_bottom = draw_glyph_strip(24, 46)
+  widgets.label(theme.font("t"), i18n.t("ui.demo.title"), 24, 10, 600, theme.colors.text, 0)
+  local strip_bottom = draw_glyph_strip(24, strip_y)
 
   -- Icon buttons row.
   local by = strip_bottom + 8
   widgets.label(theme.font("s"), i18n.t("ui.demo.icon_buttons"), 24, by, 400, theme.colors.text_dim, 0)
-  by = by + 20
+  by = by + lab
   widgets.icon_button("demo_icon_a", { x = 24, y = by, w = 48, h = 48 }, glyphs.pad("a"), {
     on_click = function() widgets.show_toast("A") end,
   })
@@ -126,14 +133,15 @@ function _draw()
   -- List.
   local list_y = by + 64
   widgets.label(theme.font("s"), i18n.t("ui.demo.list"), 24, list_y, 400, theme.colors.text_dim, 0)
-  local sel, activated = widgets.list("demo_list", { x = 24, y = list_y + 20, w = 400, h = 196 },
+  local list_h = theme.large_text and 156 or 196
+  local sel, activated = widgets.list("demo_list", { x = 24, y = list_y + lab, w = 400, h = list_h },
     list_items(), M.list_sel, { header = i18n.t("ui.demo.crafting") })
   M.list_sel = sel
 
   -- Item grid.
-  local grid_y = list_y + 232
+  local grid_y = list_y + lab + list_h + 16
   widgets.label(theme.font("s"), i18n.t("ui.demo.grid"), 24, grid_y, 260, theme.colors.text_dim, 0)
-  local cur, ev = widgets.item_grid("demo_grid", { x = 24, y = grid_y + 20 }, 5, 2,
+  local cur, ev = widgets.item_grid("demo_grid", { x = 24, y = grid_y + lab }, 5, 2,
     grid_items(), M.grid_cur, { sub_group = "content" })
   M.grid_cur = cur
   if ev and ev.kind == "select" then
@@ -141,18 +149,18 @@ function _draw()
   end
 
   -- Progress bars.
-  local pb_y = grid_y + 140
+  local pb_y = grid_y + lab + 120
   widgets.label(theme.font("s"), i18n.t("ui.demo.progress"), 24, pb_y, 260, theme.colors.text_dim, 0)
-  widgets.progress_bar({ x = 24, y = pb_y + 20, w = 300, h = 16 }, 35, 100, { show_percent = true, color = theme.colors.cold })
-  widgets.progress_bar({ x = 24, y = pb_y + 44, w = 300, h = 16 }, 62, 100,
+  widgets.progress_bar({ x = 24, y = pb_y + lab, w = 300, h = 18 }, 35, 100, { show_percent = true, color = theme.colors.cold })
+  widgets.progress_bar({ x = 24, y = pb_y + lab + 26, w = 300, h = 18 }, 62, 100,
     { text = i18n.t("ui.demo.progress_label"), color = theme.colors.accent })
-  widgets.progress_bar({ x = 24, y = pb_y + 68, w = 300, h = 16 }, 5, 5,
+  widgets.progress_bar({ x = 24, y = pb_y + lab + 52, w = 300, h = 18 }, 5, 5,
     { show_percent = true, color = theme.colors.ok, segments = 5 })
 
   -- Stepper (right column, clear of the hint bar).
   local st_y = 320
   widgets.label(theme.font("s"), i18n.t("ui.demo.stepper"), 470, st_y, 260, theme.colors.text_dim, 0)
-  local nv, changed, done = widgets.stepper("demo_step", { x = 470, y = st_y + 20, w = 300, h = 40 },
+  local nv, changed, done = widgets.stepper("demo_step", { x = 470, y = st_y + lab, w = 300, h = 40 },
     M.step_val, 0, 20, 1, {
       sub_group = "content",
       on_change = function(v) M.step_val = v end,
@@ -166,7 +174,7 @@ function _draw()
     on_click = function() end,
     tooltip = { title = i18n.t("ui.demo.tip_title"), body = i18n.t("ui.demo.tip_body"),
       footer = i18n.t("ui.demo.action_repair") },
-    force_tooltip = true,
+    force_tooltip = (M.view == "main"),
   })
   widgets.label(theme.font("s"), i18n.t("ui.demo.tooltip"), 470, 176, 400, theme.colors.text_dim, 0)
 

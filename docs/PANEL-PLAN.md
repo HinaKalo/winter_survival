@@ -172,3 +172,25 @@ PANEL_DEMO_DEVICE=keyboard tools/shot.sh /tmp/opencode/panel_hint_keyboard_zh.pn
 | 手柄图标没有正式图集 | 先程序占位并保留 `glyphs.draw()` 的图集分支；ART 交付后只换绘制 |
 | 面板在夹具上正常、真实游玩出错 | P0 夹具由机器人真实跑出；HOME 合入前用真实流程重跑 PANEL 探针（§6 风险表） |
 | `ui.clip` 嵌套 | 列表只在自己的可视区 clip，行内不 clip；工具提示/下拉在 `clip_off()` 之后画 |
+
+## 8. 返工 1 记录（控件部分审查后）
+
+行为裁定（实现以此为准，API 不变）：
+
+- **模态结果只交付一次**：`modal/confirm/radial` 在绘制路径上返回的结果不再存入 `_modal_results/_radial_results`；只有经 `focus.update` 取消（Esc/B/右键）关闭时才存，下一次同 id 调用交付一次后清除（0.5 s 未取走即丢弃）。内部 `finish_modal/finish_radial` = 关闭但不存结果，`close_modal/close_radial` = 关闭并存结果。
+- **模态队列**：模态与轮盘共用一个 FIFO（`widgets._queue`，项 `{kind,id,spec,seen}`）。占用时的请求入队，按序放行；调用方照常每帧调用，返回 `nil` = 尚未显示。0.5 s 内没再提交的排队项自动丢弃。新打开的轮盘首帧忽略输入（关闭上一个模态的那次按键不会立刻选中扇区）。
+- **ItemGrid 取消**：持物时 Esc/B/右键 → `{kind="cancel"}`，清空 held，且经 `focus.cancel_capture` 阻止同一次取消再触发面板 `on_cancel`；持物时不产生转移/次级事件；同一帧先到的事件不被覆盖。键盘 `on_activate` 产生的事件经 `st.pending_event` 在下一次绘制返回（原先丢失）。
+- **ItemGrid 的 Y**（UI-UX §4.9 与 §4.11 的取舍）：手柄 Y = 物品菜单（`event.kind="secondary"`），键盘 H = 立即显示工具提示（`ui_info`）；X / Shift+Enter = 转移。键盘没有物品菜单键（表里未定义），待 P0-3 动作表补 `ui_menu` 之类再接。
+- **ui_info**：`widgets.info_active(id)`——聚焦元素按 `ui_info` 立即显示并常驻其工具提示，再按一次、Esc/B 或焦点移走时撤销；常驻期间其他元素的悬停/聚焦提示被抑制。
+- **List**：PageUp/PageDown/Home/End 移动的是聚焦行（`focus.set_focus`），视口随之滚动；只在选中行变化时跟随，因此滚动条仍可把视口拖离；仅绘制可见行，所有行仍注册焦点（视口外的行带 `no_hover`）；空列表返回 `nil`；禁用行激活播 `sfx/ui_deny`；滚动条不超出 `rect`；箭头钮按下即滚一行，按住 0.4 s 后每 60 ms 一行。
+- **Stepper**：`enabled=false` 时可聚焦、方向键/Home/End/PageUp/Down/Enter 只播 `sfx/ui_deny`，不改值。鼠标按下 ± 钮不再同时算作 Enter 确认。
+- **Radial**：扇区命中以图标为中心（±半个扇区），北=1 顺时针；鼠标悬停选中扇区；左键按下不再按旧的选中项确认（改在松开时按指针扇区）。`widgets.radial_sector(dx,dy,n)` 公开供探针使用。
+- **图标名**：`glyphs.spec(name)` 是唯一解析器：`key:*`、`pad:*`、`mouse:left|right|middle|move|drag`（数字 0/1/2 仍可）。
+- **提示栏**：鼠标设备下主图标已是键帽时不再画第二个热键；热键宽度计入排版；上限 6 项按“可见项”计；`raid` 预设把潜行/奔跑合成一项（`action2="run_hold"`，新词条 `hint.sneak_run`），撤离出现时共 6 项。`hintbar.layout()` / `hintbar.resolve()` 公开供探针使用。
+- **进度条文字**：填充部分用深色 `theme.colors.text_on_fill`，其余部分用浅色（按填充边界分两次裁剪绘制）。
+- **工具提示**：物品格 0.3 s（§4.9），其他 0.4 s。
+- **拖放**：拖拽中落点格画 `ok`/`danger` 框（`opts.can_drop(from,to)` 可选，默认可放入空格或未禁用格）。
+
+绕过动作表直读按键的清单见 `widgets.lua` 文件头；P0-3 增补动作后逐项替换。
+
+探针：`tests/probe/panel_widgets.lua` 扩为 115 项，覆盖上述各条，并对 zh/en/ko × 标准/大字循环检查quad 预算、焦点可达、全部提示栏预设（三设备）不溢出、模态正文/标题不越界。`panel_demo.lua` 支持 `PANEL_DEMO_LARGE=1`。

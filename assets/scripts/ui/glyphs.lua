@@ -31,6 +31,8 @@ local KEY_WIDE = {
 }
 
 local MOUSE_LABELS = { [0] = "L", [1] = "R", [2] = "M" }
+local MOUSE_BTN = { left = 0, right = 1, middle = 2 }
+local MOUSE_NAME = { [0] = "left", [1] = "right", [2] = "middle" }
 
 local function ensure_atlas()
   -- ART has not delivered assets/ui/glyphs.png yet. Do not probe for it every
@@ -79,13 +81,40 @@ function M.key_name(code)
   return "K" .. tostring(code)
 end
 
+-- Mouse glyph. `btn` is a number (0/1/2) or a name: "left" | "right" | "middle"
+-- | "move" | "drag" (PANEL-PLAN §3). "move" highlights no button (arrows only);
+-- "drag" is the left button plus an arrow.
 function M.mouse(btn)
-  return { kind = "mouse", btn = btn or 0, label = MOUSE_LABELS[btn or 0] or "M", key = "mouse:" .. tostring(btn or 0) }
+  local mode = nil
+  if type(btn) == "string" then
+    if btn == "move" then mode, btn = "move", -1
+    elseif btn == "drag" then mode, btn = "drag", 0
+    else btn = MOUSE_BTN[btn] or tonumber(btn) or 0 end
+  end
+  btn = btn or 0
+  return {
+    kind = "mouse", btn = btn, mode = mode,
+    label = MOUSE_LABELS[btn] or "M",
+    key = "mouse:" .. (mode or MOUSE_NAME[btn] or tostring(btn)),
+  }
 end
 
 function M.pad(name)
   name = tostring(name or "")
   return { kind = "pad_" .. name, name = name, label = string.upper(name), key = "pad:" .. name }
+end
+
+-- Shared parser for glyph names used by widgets and the hint bar:
+-- "key:<name>", "mouse:<left|right|middle|move|drag>", "pad:<name>", or a bare
+-- key name. Tables (already a spec) pass through.
+function M.spec(g)
+  if type(g) == "table" then return g end
+  if type(g) ~= "string" then return nil end
+  local prefix, rest = g:match("^(%a+):(.+)$")
+  if prefix == "pad" then return M.pad(rest) end
+  if prefix == "key" then return M.key(rest) end
+  if prefix == "mouse" then return M.mouse(rest) end
+  return M.key(g)
 end
 
 function M.pad_button(btn)
@@ -190,12 +219,26 @@ local function draw_mouse(spec, x, y, size)
   ui.rect(x + size / 2 - 1, y + 2, 1, h - 2)
   local col = theme.colors.accent
   theme.set_color(col)
+  if spec.mode == "move" then
+    -- four arrow ticks around the body
+    local mid = math.floor(size / 2)
+    ui.rect(x, y + mid - 1, 3, 2)
+    ui.rect(x + size - 3, y + mid - 1, 3, 2)
+    ui.rect(x + mid - 1, y, 2, 2)
+    ui.rect(x + mid - 1, y + h - 2, 2, 2)
+    return
+  end
   if spec.btn == 0 then
     ui.rect(x + 5, y + 3, size / 2 - 6, (h - 6) * 0.5)
   elseif spec.btn == 1 then
     ui.rect(x + size / 2, y + 3, size / 2 - 5, (h - 6) * 0.5)
   else
     ui.rect(x + size / 2 - 2, y + h * 0.55, 4, h * 0.35)
+  end
+  if spec.mode == "drag" then
+    -- arrow: tail + head at the lower right
+    ui.rect(x + size - 12, y + h - 5, 10, 2)
+    ui.rect(x + size - 5, y + h - 8, 2, 8)
   end
 end
 

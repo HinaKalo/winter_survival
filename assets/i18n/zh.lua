@@ -63,6 +63,7 @@ return {
   ["hint.focus_next"] = "切换目标",
   ["hint.sneak"] = "潜行",
   ["hint.run"] = "奔跑",
+  ["hint.sneak_run"] = "潜行/奔跑",
   ["hint.squad"] = "队友指令",
   ["hint.evacuate"] = "撤离",
   ["hint.attack"] = "攻击",

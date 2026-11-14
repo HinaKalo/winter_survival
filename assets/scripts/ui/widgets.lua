@@ -1,4 +1,13 @@
 -- Immediate-mode UI widget library (UI-UX §4).
+--
+-- Raw input reads: until P0-3 adds the matching actions to core/input.lua, these
+-- widgets read some keys directly (via iso.key_*), bypassing rebinding:
+--   * Slider:   Left Shift / LT (x5 step)
+--   * List:     Home / End (first / last row)
+--   * ItemGrid: Left/Right Shift while clicking (quick transfer)
+--   * Radial:   digit keys 1-8 (sector pick)
+--   * Stepper:  Shift+Left/Right (+-10), Home / End (min / max)
+-- Everything else goes through input.pressed/down("<action>").
 local iso = require("iso")
 local i18n = require("core.i18n")
 local input = require("core.input")
@@ -21,7 +30,9 @@ local M = {
   _grids = {},       -- [id] = {cursor, held, ...}
   _modals = {},      -- [id] = {spec, hold_t, pending}
   _modal_order = {},
-  _modal_results = {},
+  _modal_results = {},   -- [id] = {r=result, t=time}; only for results not returned on the draw path
+  _queue = {},       -- FIFO of {kind="modal"|"radial", id, spec, seen} waiting for the overlay slot
+  _info_owner = nil, -- element id whose tooltip is pinned by ui_info (H / Y)
   _radials = {},     -- [id] = {sel, spec}
   _radial_results = {},
   _steppers = {},    -- [id] = {btn, t, next}
@@ -429,17 +440,12 @@ local function color_of(c, fallback)
   return fallback
 end
 
-local function glyph_spec(g)
-  if type(g) == "table" then return g end
-  if type(g) ~= "string" then return nil end
-  if g:sub(1, 4) == "pad:" then return glyphs.pad(g:sub(5)) end
-  if g:sub(1, 4) == "key:" then return glyphs.key(g:sub(5)) end
-  if g:sub(1, 6) == "mouse:" then return glyphs.mouse(tonumber(g:sub(7)) or 0) end
-  return glyphs.key(g)
-end
+local glyph_spec = glyphs.spec
 
 -- Free per-id state (scroll, drag, timers) when a panel closes.
 function M.reset(id)
+  if M._modals[id] then M.finish_modal(id) end
+  if M._radials[id] then M.finish_radial(id) end
   local tables = { M._tt, M._lists, M._grids, M._steppers, M._radials, M._modal_results, M._radial_results }
   for _, tbl in ipairs(tables) do
     for k in pairs(tbl) do
@@ -448,8 +454,14 @@ function M.reset(id)
       end
     end
   end
-  if M._modals[id] then M.close_modal(id, "cancel") end
   M._modal_results[id] = nil
+  M._radial_results[id] = nil
+  if M._info_owner and (M._info_owner == id or M._info_owner:sub(1, #id + 1) == id .. "#") then
+    M._info_owner = nil
+  end
+  for i = #M._queue, 1, -1 do
+    if M._queue[i].id == id then table.remove(M._queue, i) end
+  end
 end
 
 -- ------------------------------------------------------------------ IconButton (§4.3)
@@ -531,10 +543,24 @@ function M.icon_button(id, rect, glyph, opts)
       focus = focus.is_focused(id),
       force = opts.force_tooltip,
       delay = opts.tooltip_delay,
+      info = M.info_active(id),
     })
   end
   if focus.show_ring(id) then focus.draw_ring(rect) end
   return clicked
+end
+
+-- ui_info (H / pad Y): pin the focused element's tooltip until dismissed
+-- (ui_info again, Esc/B, or focus moving elsewhere). Call once per frame per
+-- focusable element that owns a tooltip; returns true while pinned.
+function M.info_active(owner)
+  local focused = focus.is_focused(owner)
+  if focused and input.pressed("ui_info") then
+    if M._info_owner == owner then M._info_owner = nil else M._info_owner = owner end
+  end
+  if M._info_owner and M._info_owner ~= focus.current then M._info_owner = nil end
+  if M._info_owner and input.pressed("cancel") then M._info_owner = nil end
+  return M._info_owner == owner
 end
 
 -- ------------------------------------------------------------------ ProgressBar (§4.10)
@@ -570,8 +596,24 @@ function M.progress_bar(rect, value, max_v, opts)
   local txt = opts.text
   if not txt and opts.show_percent then txt = string.format("%d%%", math.floor(ratio * 100 + 0.5)) end
   if txt then
-    M.label(f, txt, rect.x + 4, rect.y + math.floor((rect.h - ui.font_line_height(f)) * 0.5), rect.w - 8,
-      opts.text_color or theme.colors.text, 1)
+    local tx, ty = rect.x + 4, rect.y + math.floor((rect.h - ui.font_line_height(f)) * 0.5)
+    local tw = rect.w - 8
+    if opts.text_color then
+      M.label(f, txt, tx, ty, tw, opts.text_color, 1)
+    elseif fill_w > 0 then
+      -- Dark label over the bright fill, light label over the empty part, so the
+      -- text stays readable on the orange fill (theme.colors.text_on_fill).
+      local split = rect.x + inner + fill_w
+      ui.clip(rect.x, rect.y, split - rect.x, rect.h)
+      ui.text_shadow_off()
+      theme.set_color(theme.colors.text_on_fill)
+      ui.text_box(f, txt, tx, ty, tw, 1, -1)
+      ui.clip(split, rect.y, rect.x + rect.w - split, rect.h)
+      M.label(f, txt, tx, ty, tw, theme.colors.text, 1)
+      ui.clip_off()
+    else
+      M.label(f, txt, tx, ty, tw, theme.colors.text, 1)
+    end
   end
   if opts.noise then
     local lvl = math.max(0, math.min(5, opts.noise))
@@ -591,7 +633,9 @@ function M.tooltip(id, anchor, spec, opts)
   local t = now()
   local st = ensure_state(M._tt, id)
   if st.last == nil then st.last = t; st.t = 0 end
-  local active = opts.force or opts.hover or opts.focus
+  -- A tooltip pinned by ui_info wins over hover/focus tooltips of other elements.
+  if M._info_owner and not opts.info then return false end
+  local active = opts.force or opts.info or opts.hover or opts.focus
   if not active then
     st.t = 0
     st.last = t
@@ -633,7 +677,8 @@ function M.tooltip(id, anchor, spec, opts)
   x = math.max(4, math.min(sw - w - 4, x))
   y = math.max(4, math.min(sh - h - 4, y))
 
-  theme.nine("tip", x, y, w, h, theme.colors.white, 0.98)  M.label(f, M.ellipsize(f, title, w - 16), x + 8, y + 8, w - 16, theme.colors.text, 0)
+  theme.nine("tip", x, y, w, h, theme.colors.white, 0.98)
+  M.label(f, M.ellipsize(f, title, w - 16), x + 8, y + 8, w - 16, theme.colors.text, 0)
   local cy = y + 8 + lh
   if body then
     cy = cy + 4
@@ -659,28 +704,49 @@ function M.list(id, rect, items, selected, opts)
   st.last_t = st.last_t or -100
   st.activate_idx = st.activate_idx or nil
 
+  local n = #items
   local row_h = opts.row_h or theme.layout.list_row
   local header_h = opts.header and 24 or 0
   local sb_w = (opts.scrollbar ~= false) and 16 or 0
   local content_w = rect.w - sb_w
   local view_h = rect.h - header_h
   local visible = math.max(1, math.floor(view_h / row_h))
-  local max_scroll = math.max(0, #items - visible)
+  local max_scroll = math.max(0, n - visible)
   local cur = selected or 1
   local list_focused = false
+  local t = now()
 
-  -- If focus landed on a row, honor it and scroll it into view.
-  for i = 1, #items do
+  -- If focus landed on a row, honor it.
+  for i = 1, n do
     if focus.is_focused(id .. "#row" .. i) then
       cur = i
       list_focused = true
       break
     end
   end
-  if cur < 1 then cur = 1 end
-  if cur > #items then cur = math.max(1, #items) end
-  if cur <= st.scroll then st.scroll = cur - 1
-  elseif cur > st.scroll + visible then st.scroll = cur - visible end
+  cur = math.max(1, math.min(math.max(1, n), cur))
+
+  -- Keyboard page / home / end: move the *focused row* (focus is the source of
+  -- truth; the scroll position follows it below).
+  if list_focused and n > 0 then
+    local target = cur
+    if input.pressed("ui_page_prev") then target = math.max(1, cur - visible) end
+    if input.pressed("ui_page_next") then target = math.min(n, cur + visible) end
+    if iso.key_pressed(K.HOME) then target = 1 end
+    if iso.key_pressed(K.END) then target = n end
+    if target ~= cur then
+      cur = target
+      focus.set_focus(id .. "#row" .. cur)
+    end
+  end
+
+  -- Scroll follows the current row only when it changes, so the scrollbar can
+  -- still move the viewport away from it.
+  if st.last_cur ~= cur then
+    if cur <= st.scroll then st.scroll = cur - 1
+    elseif cur > st.scroll + visible then st.scroll = cur - visible end
+    st.last_cur = cur
+  end
   st.scroll = math.max(0, math.min(max_scroll, st.scroll))
 
   if opts.header then
@@ -691,10 +757,9 @@ function M.list(id, rect, items, selected, opts)
   local list_y = rect.y + header_h
   local mx, my = ui.mouse_pos()
   local activated = nil
-  local t = now()
   local over_rows = point_in(mx, my, rect.x, list_y, content_w, view_h)
 
-  if over_rows and #items > 0 then
+  if over_rows and n > 0 then
     local row_i = math.floor((my - list_y) / row_h) + 1
     local idx = st.scroll + row_i
     local item = items[idx]
@@ -705,31 +770,46 @@ function M.list(id, rect, items, selected, opts)
         if st.last_click == idx and (t - st.last_t) < 0.35 then activated = item end
         st.last_click = idx
         st.last_t = t
+      else
+        kit_audio.sfx("sfx/ui_deny", 0.5, 0.7)
       end
     end
   end
 
-  -- Keyboard page / home / end.
-  if list_focused or focus.is_focused(id .. "#list") then
-    if input.pressed("ui_page_prev") then st.scroll = math.max(0, st.scroll - visible) end
-    if input.pressed("ui_page_next") then st.scroll = math.min(max_scroll, st.scroll + visible) end
-    if iso.key_pressed(K.HOME) then cur = 1; st.scroll = 0 end
-    if iso.key_pressed(K.END) then cur = #items; st.scroll = max_scroll end
-  end
-
-  -- Scrollbar (mouse only; rows keep keyboard focus).
-  local sb_x = rect.x + content_w + 2
+  -- Scrollbar (mouse only; rows keep keyboard focus). Stays inside `rect`.
+  local sb_x = rect.x + content_w
   local sb_y = list_y + 16
   local sb_h = math.max(1, view_h - 32)
   local track_x = sb_x + 4
   local track_w = 8
+  local thumb_h = math.max(32, math.floor(sb_h * math.min(1, visible / math.max(1, n))))
   if sb_w > 0 then
-    if kit_input.mouse_released(0) and point_in(mx, my, sb_x, list_y, 16, 16) then
-      st.scroll = math.max(0, st.scroll - 1)
-    elseif kit_input.mouse_released(0) and point_in(mx, my, sb_x, list_y + view_h - 16, 16, 16) then
-      st.scroll = math.min(max_scroll, st.scroll + 1)
+    -- Arrow buttons: one row on press, then hold-repeat (0.4 s, then every 60 ms; §4.8).
+    local up_hit = point_in(mx, my, sb_x, list_y, 16, 16)
+    local dn_hit = point_in(mx, my, sb_x, list_y + view_h - 16, 16, 16)
+    if iso.mouse_pressed(0) and (up_hit or dn_hit) then
+      st.arrow = up_hit and -1 or 1
+      st.arrow_t = 0
+      st.arrow_next = 0
+      st.arrow_last = t
+      st.scroll = math.max(0, math.min(max_scroll, st.scroll + st.arrow))
+    elseif st.arrow then
+      local still = iso.mouse_down(0) and ((st.arrow < 0 and up_hit) or (st.arrow > 0 and dn_hit))
+      if still then
+        local dt = math.max(0, t - (st.arrow_last or t))
+        st.arrow_last = t
+        st.arrow_t = st.arrow_t + dt
+        if st.arrow_t >= 0.4 then
+          st.arrow_next = st.arrow_next + dt
+          while st.arrow_next >= 0.06 do
+            st.arrow_next = st.arrow_next - 0.06
+            st.scroll = math.max(0, math.min(max_scroll, st.scroll + st.arrow))
+          end
+        end
+      else
+        st.arrow = nil
+      end
     end
-    local thumb_h = math.max(32, math.floor(sb_h * math.min(1, visible / math.max(1, #items))))
     local thumb_y = sb_y + (max_scroll > 0 and math.floor((sb_h - thumb_h) * st.scroll / max_scroll) or 0)
     if iso.mouse_pressed(0) and point_in(mx, my, track_x, thumb_y, track_w, thumb_h) then
       st.drag_thumb = true
@@ -757,15 +837,19 @@ function M.list(id, rect, items, selected, opts)
     if item and item.enabled ~= false then
       cur = idx
       activated = item
+    elseif item then
+      kit_audio.sfx("sfx/ui_deny", 0.5, 0.7)
     end
   end
 
-  -- Content.
+  -- Content: only rows in (or straddling) the viewport are drawn.
   local f = theme.font("b")
   local fs = theme.font("s")
   local lh = ui.font_line_height(f)
+  local first_row = st.scroll + 1
+  local last_row = math.min(n, st.scroll + visible + 1)
   ui.clip(rect.x, list_y, content_w, view_h)
-  for i = 1, #items do
+  for i = first_row, last_row do
     local item = items[i]
     local ry = list_y + (i - 1 - st.scroll) * row_h
     local row_rect = { x = rect.x, y = ry + 1, w = content_w, h = row_h - 2 }
@@ -805,11 +889,20 @@ function M.list(id, rect, items, selected, opts)
       theme.set_color(theme.colors.disabled, 0.7)
       ui.rect(tx, ry + math.floor(row_h * 0.5), math.max(8, row_rect.w - 24), 1)
     end
+  end
+  ui.clip_off()
 
+  -- Every row stays registered (cheap, no quads) so keyboard navigation can walk
+  -- past the viewport; rows outside it are excluded from mouse hover so they
+  -- never shadow widgets laid out below/above the list.
+  for i = 1, n do
+    local item = items[i]
+    local ry = list_y + (i - 1 - st.scroll) * row_h
     focus.register({
       id = id .. "#row" .. i,
-      rect = { x = row_rect.x, y = ry, w = row_rect.w, h = row_h },
-      enabled = enabled or opts.allow_disabled_focus ~= false,
+      rect = { x = rect.x, y = ry, w = content_w, h = row_h },
+      no_hover = (i < first_row or i > st.scroll + visible),
+      enabled = (item.enabled ~= false) or opts.allow_disabled_focus ~= false,
       sub_group = opts.sub_group,
       nav = item.nav,
       on_activate = function() st.activate_idx = i end,
@@ -819,22 +912,17 @@ function M.list(id, rect, items, selected, opts)
       end,
     })
   end
-  ui.clip_off()
 
-  -- One focusable element for the list itself is not needed: rows carry focus,
-  -- PageUp/Down and Home/End are handled while any row is focused.
-
-  if #items == 0 then
+  if n == 0 then
     M.label(fs, opts.empty_text or i18n.t("ui.list.empty"), rect.x + 12, list_y + 8, content_w - 24,
       theme.colors.text_dim, 1)
   end
 
-  if sb_w > 0 and #items > 0 then
+  if sb_w > 0 and n > 0 then
     theme.set_color(theme.colors.bg_dark, 0.9)
     ui.rect(sb_x, list_y, 16, view_h)
     theme.set_color(theme.colors.edge)
     ui.rect(track_x, sb_y, track_w, sb_h)
-    local thumb_h = math.max(32, math.floor(sb_h * math.min(1, visible / math.max(1, #items))))
     local thumb_y = sb_y + (max_scroll > 0 and math.floor((sb_h - thumb_h) * st.scroll / max_scroll) or 0)
     theme.set_color(theme.colors.text_dim)
     ui.rect(track_x, thumb_y, track_w, thumb_h)
@@ -843,19 +931,18 @@ function M.list(id, rect, items, selected, opts)
   end
 
   -- Tooltip for the hovered/focused row, after clip_off (§4.8).
-  for i = 1, #items do
+  for i = first_row, math.min(n, st.scroll + visible) do
     local rid = id .. "#row" .. i
     if focus.is_hovered(rid) or focus.is_focused(rid) then
       local item = items[i]
       local ry = list_y + (i - 1 - st.scroll) * row_h
-      if i > st.scroll and i <= st.scroll + visible then
-        M.tooltip(rid .. "#tip", { x = rect.x, y = ry, w = content_w, h = row_h },
-          item.tooltip or { title = item.label, body = item.desc },
-          { hover = focus.is_hovered(rid), focus = focus.is_focused(rid) })
-      end
+      M.tooltip(rid .. "#tip", { x = rect.x, y = ry, w = content_w, h = row_h },
+        item.tooltip or { title = item.label, body = item.desc },
+        { hover = focus.is_hovered(rid), focus = focus.is_focused(rid), info = M.info_active(rid) })
       break
     end
   end
+  if n == 0 then return nil, activated end
   return cur, activated
 end
 
@@ -882,16 +969,35 @@ function M.item_grid(id, rect, cols, rows, items, cursor, opts)
   local gap = opts.gap or theme.layout.slot_gap
   local mx, my = ui.mouse_pos()
   local t = now()
-  local event = nil
+  local event = st.pending_event -- produced by on_activate during focus.update
+  st.pending_event = nil
   if not st.cursor then st.cursor = cursor or 1 end
   if cursor then st.cursor = cursor end
-  if not st.held then st.held = nil end
   local cur = st.cursor
+  local dev = input.last_device()
+
+  -- First event of the frame wins; later sources never overwrite it.
+  local function emit(e)
+    if not event then event = e end
+  end
 
   local function item_at(i)
     local it = items[i]
     if type(it) == "table" then return it end
     return nil
+  end
+
+  -- While an item is held, Esc / B / right click cancel it. The cancel is
+  -- consumed here: it must not also reach the panel's on_cancel (focus.update)
+  -- nor fall through to secondary / transfer below.
+  local consumed = false
+  if st.held then
+    focus.cancel_capture = true
+    if input.pressed("cancel") or iso.mouse_pressed(1) then
+      st.held = nil
+      consumed = true
+      emit({ kind = "cancel", index = grid_cell_at(rect, cols, rows, slot, gap, mx, my) })
+    end
   end
 
   -- Mouse button edges.
@@ -903,14 +1009,9 @@ function M.item_grid(id, rect, cols, rows, items, cursor, opts)
       st.drag_started = false
     end
   end
-  if iso.mouse_pressed(1) then
+  if not consumed and iso.mouse_pressed(1) then
     local idx = grid_cell_at(rect, cols, rows, slot, gap, mx, my)
-    if st.held then
-      st.held = nil
-      event = { kind = "cancel", index = idx }
-    elseif idx then
-      event = { kind = "secondary", index = idx }
-    end
+    if idx then emit({ kind = "secondary", index = idx }) end
   end
   if iso.mouse_down(0) and st.press_idx and not st.drag_started then
     local dx, dy = mx - (st.press_x or 0), my - (st.press_y or 0)
@@ -921,19 +1022,19 @@ function M.item_grid(id, rect, cols, rows, items, cursor, opts)
     local shift = iso.key_down(K.LEFT_SHIFT) or iso.key_down(K.RIGHT_SHIFT)
     if st.drag_started then
       if target and target ~= st.press_idx then
-        event = { kind = shift and "transfer" or "move", from = st.press_idx, to = target }
+        emit({ kind = shift and "transfer" or "move", from = st.press_idx, to = target })
       end
     elseif target and target == st.press_idx then
       if st.held == target then
         st.held = nil
       elseif st.held then
-        event = { kind = shift and "transfer" or "move", from = st.held, to = target }
+        emit({ kind = shift and "transfer" or "move", from = st.held, to = target })
         st.held = nil
       elseif shift then
-        event = { kind = "transfer", index = target }
+        emit({ kind = "transfer", index = target })
       else
         st.held = target
-        event = { kind = "select", index = target }
+        emit({ kind = "select", index = target })
         if st.last_click == target and (t - (st.last_t or -100)) < 0.35 then
           event = { kind = "activate", index = target }
           st.held = nil
@@ -962,14 +1063,16 @@ function M.item_grid(id, rect, cols, rows, items, cursor, opts)
       sub_group = opts.sub_group,
       nav = nav,
       on_activate = function()
+        -- Runs inside focus.update (before the next draw): hand the event over
+        -- through st.pending_event.
         if st.held and st.held ~= i then
-          event = { kind = "move", from = st.held, to = i }
+          st.pending_event = { kind = "move", from = st.held, to = i }
           st.held = nil
         elseif st.held == i then
           st.held = nil
         else
           st.held = i
-          event = { kind = "select", index = i }
+          st.pending_event = { kind = "select", index = i }
         end
         st.cursor = i
       end,
@@ -977,8 +1080,15 @@ function M.item_grid(id, rect, cols, rows, items, cursor, opts)
     if focus.is_focused(id .. "#cell" .. i) then
       st.cursor = i
       cur = i
-      if input.pressed("ui_secondary") then event = { kind = "transfer", index = i } end
-      if input.pressed("ui_info") then event = { kind = "secondary", index = i } end
+      -- Keyboard / pad: X (ui_secondary, Shift+Enter) = quick transfer, pad Y = item
+      -- menu (UI-UX §4.9; keyboard H stays "show tooltip"). Nothing while holding.
+      if not st.held and not consumed and dev ~= "mouse" then
+        if input.pressed("ui_secondary") then
+          emit({ kind = "transfer", index = i })
+        elseif dev == "pad" and input.pressed("ui_info") then
+          emit({ kind = "secondary", index = i })
+        end
+      end
     end
   end
 
@@ -1046,10 +1156,28 @@ function M.item_grid(id, rect, cols, rows, items, cursor, opts)
         xx = xx + dash + 4
       end
     end
-    if (focused or hovered) and item then
+    if (focused or hovered) and item and not st.drag_started then
       M.tooltip(id .. "#cell" .. i .. "#tip", cell,
         item.tooltip or { title = item.label or "", body = item.desc },
-        { hover = hovered, focus = focused })
+        { hover = hovered, focus = focused, delay = opts.tooltip_delay or 0.3,
+          info = focused and dev ~= "pad" and M.info_active(id .. "#cell" .. i) })
+    end
+  end
+
+  -- Drop target highlight while dragging (§4.9): ok frame = can drop, danger = cannot.
+  if st.drag_started and st.press_idx then
+    local target = grid_cell_at(rect, cols, rows, slot, gap, mx, my)
+    if target and target ~= st.press_idx then
+      local tit = item_at(target)
+      local can
+      if opts.can_drop then can = opts.can_drop(st.press_idx, target) and true or false
+      else can = (tit == nil) or tit.enabled ~= false end
+      local c = grid_slot_rect(rect, target, cols, slot, gap)
+      theme.set_color(can and theme.colors.ok or theme.colors.danger)
+      ui.rect(c.x - 2, c.y - 2, c.w + 4, 2)
+      ui.rect(c.x - 2, c.y + c.h, c.w + 4, 2)
+      ui.rect(c.x - 2, c.y, 2, c.h)
+      ui.rect(c.x + c.w, c.y, 2, c.h)
     end
   end
 
@@ -1079,35 +1207,87 @@ function M.any_modal_open()
   return #M._modal_order > 0
 end
 
-function M.close_modal(id, result)
+-- Close without recording a result: used when the result is returned straight
+-- to the caller on the draw path (so it cannot be delivered a second time).
+function M.finish_modal(id)
   local st = M._modals[id]
-  if not st then return end
+  if not st then return false end
   M._modals[id] = nil
   for i, v in ipairs(M._modal_order) do
     if v == id then table.remove(M._modal_order, i) break end
   end
   if modal_top_is(id) then focus.pop_group() end
-  M._modal_results[id] = result or "cancel"
+  return true
+end
+
+-- Close from outside the draw path (Esc / B via focus.update, or by the caller):
+-- the result is held until the next M.modal(id) call delivers it once.
+function M.close_modal(id, result)
+  if M.finish_modal(id) then
+    M._modal_results[id] = { r = result or "cancel", t = now() }
+  end
+end
+
+local RESULT_TTL = 0.5   -- a stored result nobody collected is dropped after this long
+local QUEUE_TTL = 0.5    -- a queued request nobody re-submitted is dropped after this long
+
+local function take_result(tbl, id)
+  local rec = tbl[id]
+  if not rec then return nil end
+  tbl[id] = nil
+  if now() - rec.t > RESULT_TTL then return nil end
+  return rec.r
+end
+
+local function overlay_open()
+  return #M._modal_order > 0 or next(M._radials) ~= nil
+end
+
+-- Modals and radials share one slot. A request that arrives while the slot is
+-- taken (or while earlier requests wait) joins a FIFO and is admitted, in order,
+-- once the slot is free and it is the caller's turn again. Callers just keep
+-- calling M.modal / M.radial every frame; nil means "not shown yet".
+local function admit(kind, id, spec)
+  local t = now()
+  for i = #M._queue, 1, -1 do
+    if t - M._queue[i].seen > QUEUE_TTL then table.remove(M._queue, i) end
+  end
+  local pos
+  for i, q in ipairs(M._queue) do
+    if q.id == id then pos = i; break end
+  end
+  if pos then
+    M._queue[pos].seen = t
+    M._queue[pos].spec = spec
+  end
+  if not overlay_open() and (#M._queue == 0 or pos == 1) then
+    if pos then table.remove(M._queue, pos) end
+    return true
+  end
+  if not pos then
+    M._queue[#M._queue + 1] = { kind = kind, id = id, spec = spec, seen = t }
+  end
+  return false
 end
 
 function M.modal(id, spec)
   spec = spec or {}
-  local result = M._modal_results[id]
-  if result then
-    M._modal_results[id] = nil
-    return result
-  end
+  local result = take_result(M._modal_results, id)
+  if result then return result end
 
   local st = M._modals[id]
   if not st then
-    if #M._modal_order > 0 then return nil end -- queued: caller retries
+    if not admit("modal", id, spec) then return nil end
     st = {}
     M._modals[id] = st
     M._modal_order[#M._modal_order + 1] = id
     focus.push_group("modal:" .. id, {
       modal = true,
       default = spec.default,
-      on_cancel = function() M.close_modal(id, spec.cancel_result or "cancel") end,
+      on_cancel = function()
+        local cur = M._modals[id]
+        M.close_modal(id, (cur and cur.spec and cur.spec.cancel_result) or "cancel")
+      end,
     })
   end
   st.spec = spec
@@ -1200,7 +1380,7 @@ function M.modal(id, spec)
     local r = st.pending
     st.pending = nil
     focus.clear_target()
-    M.close_modal(id, r)
+    M.finish_modal(id)
     return r
   end
   focus.clear_target()
@@ -1232,40 +1412,50 @@ function M.confirm(id, spec)
 end
 
 -- ------------------------------------------------------------------ Radial (§4.14)
+-- Sector i is centred on angle (i-1) * 2pi/n clockwise from north (that is where
+-- its icon is drawn), so it spans +-half a sector around it.
 local function radial_angle_index(dx, dy, n)
   local a = math.atan(dy, dx) + math.pi * 0.5
   if a < 0 then a = a + math.pi * 2 end
   local sector = math.pi * 2 / n
-  return math.floor(a / sector) % n + 1
+  return math.floor((a + sector * 0.5) / sector) % n + 1
 end
 
 function M.radial_is_open(id)
   return M._radials[id] ~= nil
 end
 
-function M.close_radial(id, result)
+function M.finish_radial(id)
   local st = M._radials[id]
-  if not st then return end
+  if not st then return false end
   M._radials[id] = nil
   local top = focus.groups[#focus.groups]
   if top and top.id == "radial:" .. id then focus.pop_group() end
-  M._radial_results[id] = result or { action = "cancel" }
+  return true
+end
+
+function M.close_radial(id, result)
+  if M.finish_radial(id) then
+    M._radial_results[id] = { r = result or { action = "cancel" }, t = now() }
+  end
+end
+
+-- Sector (1..n, north = 1, clockwise) for an offset from the wheel centre.
+function M.radial_sector(dx, dy, n)
+  return radial_angle_index(dx, dy, n)
 end
 
 function M.radial(id, spec)
   spec = spec or {}
-  local result = M._radial_results[id]
-  if result then
-    M._radial_results[id] = nil
-    return result
-  end
+  local result = take_result(M._radial_results, id)
+  if result then return result end
 
   local st = M._radials[id]
   if not st then
-    if #M._modal_order > 0 or next(M._radials) then return nil end
     if #(spec.items or {}) < 2 then return { action = "cancel" } end
     if #(spec.items or {}) > 8 then return { action = "too_many" } end
-    st = { sel = math.max(1, math.min(#spec.items, spec.selected or 1)) }
+    if not admit("radial", id, spec) then return nil end
+    st = { sel = math.max(1, math.min(#spec.items, spec.selected or 1)), fresh = true }
     M._radials[id] = st
     focus.push_group("radial:" .. id, {
       modal = true,
@@ -1281,8 +1471,13 @@ function M.radial(id, spec)
   local R = spec.radius or 112
   local inner = spec.inner or 40
 
+  -- The frame a radial opens ignores input: the press that closed the previous
+  -- overlay (queue) must not also pick a sector here.
+  local live = not st.fresh
+  st.fresh = false
+
   -- Keyboard: arrows pick the cardinal sector, digits pick 1..8.
-  if not spec.preview then
+  if live and not spec.preview then
     if input.pressed("ui_up") then st.sel = 1 end
     if input.pressed("ui_right") then st.sel = math.max(1, math.floor(n / 4) + 1) end
     if input.pressed("ui_down") then st.sel = math.max(1, math.floor(n / 2) + 1) end
@@ -1305,19 +1500,28 @@ function M.radial(id, spec)
   local mx, my = ui.mouse_pos()
   local dx, dy = mx - cx, my - cy
   local dist = math.sqrt(dx * dx + dy * dy)
-  if not spec.preview and kit_input.mouse_released(0) then
+  if live and not spec.preview and kit_input.mouse_released(0) then
     if dist < inner or dist > R + 48 then
-      M.close_radial(id, { action = "cancel" })
+      M.finish_radial(id)
       return { action = "cancel" }
     end
     st.sel = radial_angle_index(dx, dy, n)
-    M.close_radial(id, { action = "select", item_id = items[st.sel] and items[st.sel].id, index = st.sel })
+    M.finish_radial(id)
     return { action = "select", item_id = items[st.sel] and items[st.sel].id, index = st.sel }
   end
 
-  if input.pressed("confirm") then
+  -- Hover picks the sector under the pointer once the mouse moves.
+  if not spec.preview and (st.mx ~= mx or st.my ~= my) then
+    if st.mx ~= nil and dist >= inner and dist <= R + 48 then
+      st.sel = radial_angle_index(dx, dy, n)
+    end
+    st.mx, st.my = mx, my
+  end
+
+  -- A left press is the mouse path (handled on release above), not a keyboard confirm.
+  if live and input.pressed("confirm") and not iso.mouse_pressed(0) then
     local it = items[st.sel]
-    M.close_radial(id, { action = "select", item_id = it and it.id, index = st.sel })
+    M.finish_radial(id)
     return { action = "select", item_id = it and it.id, index = st.sel }
   end
 
@@ -1407,6 +1611,14 @@ function M.stepper(id, rect, value, min_v, max_v, step, opts)
   }
 
   local mx, my = ui.mouse_pos()
+  if opts.enabled == false and iso.mouse_pressed(0) then
+    for _, b in ipairs(btns) do
+      if point_in(mx, my, b.x, by, bw, bw) then
+        kit_audio.sfx("sfx/ui_deny", 0.5, 0.7)
+        break
+      end
+    end
+  end
   if opts.enabled ~= false and iso.mouse_pressed(0) then
     for _, b in ipairs(btns) do
       if point_in(mx, my, b.x, by, bw, bw) then
@@ -1447,6 +1659,14 @@ function M.stepper(id, rect, value, min_v, max_v, step, opts)
     sub_group = opts.sub_group,
     on_activate = function() done = "confirm" end,
     on_dir = function(dir)
+      if opts.enabled == false then
+        -- Disabled: focusable (to read the tooltip) but not editable (§4.1).
+        if dir == "left" or dir == "right" then
+          kit_audio.sfx("sfx/ui_deny", 0.5, 0.7)
+          return true
+        end
+        return false
+      end
       local big = (iso.key_down(K.LEFT_SHIFT) or iso.key_down(K.RIGHT_SHIFT))
         or (pad and pad_buttons and (pad.button_down(pad_buttons.lb) or pad.button_down(pad_buttons.rb)))
       local d = big and 10 * step or step
@@ -1458,16 +1678,25 @@ function M.stepper(id, rect, value, min_v, max_v, step, opts)
 
   if focus.is_focused(id) then
     local shift = iso.key_down(K.LEFT_SHIFT) or iso.key_down(K.RIGHT_SHIFT)
-    -- Shift+arrow does not reach `ui_left/right` because the action bindings are
-    -- un-modified; handle the documented ±10 shortcut directly.
-    if shift and iso.key_pressed(K.RIGHT) then setv(value + 10 * step) end
-    if shift and iso.key_pressed(K.LEFT) then setv(value - 10 * step) end
-    if iso.key_pressed(K.HOME) then setv(min_v) end
-    if iso.key_pressed(K.END) then setv(max_v) end
-    if input.pressed("ui_page_prev") then setv(value - 10 * step) end
-    if input.pressed("ui_page_next") then setv(value + 10 * step) end
-    if input.pressed("cancel") then done = "cancel" end
-    if input.pressed("confirm") then done = "confirm" end
+    local edits = (shift and (iso.key_pressed(K.RIGHT) or iso.key_pressed(K.LEFT)))
+      or iso.key_pressed(K.HOME) or iso.key_pressed(K.END)
+      or input.pressed("ui_page_prev") or input.pressed("ui_page_next")
+    if opts.enabled == false then
+      if edits or input.pressed("confirm") then kit_audio.sfx("sfx/ui_deny", 0.5, 0.7) end
+      if input.pressed("cancel") then done = "cancel" end
+    else
+      -- Shift+arrow does not reach `ui_left/right` because the action bindings are
+      -- un-modified; handle the documented ±10 shortcut directly.
+      if shift and iso.key_pressed(K.RIGHT) then setv(value + 10 * step) end
+      if shift and iso.key_pressed(K.LEFT) then setv(value - 10 * step) end
+      if iso.key_pressed(K.HOME) then setv(min_v) end
+      if iso.key_pressed(K.END) then setv(max_v) end
+      if input.pressed("ui_page_prev") then setv(value - 10 * step) end
+      if input.pressed("ui_page_next") then setv(value + 10 * step) end
+      if input.pressed("cancel") then done = "cancel" end
+      -- A mouse press on a +/- button is not a confirm.
+      if input.pressed("confirm") and not iso.mouse_pressed(0) then done = "confirm" end
+    end
   end
 
   if opts.label then
@@ -1480,8 +1709,12 @@ function M.stepper(id, rect, value, min_v, max_v, step, opts)
     local hovered = enabled and point_in(mx, my, b.x, by, bw, bw)
     theme.nine(hovered and "btn_hover" or "btn_normal", b.x, by, bw, bw)
     local f = theme.font("b")
-    M.label(f, b.label, b.x + 2, by + math.floor((bw - ui.font_line_height(f)) * 0.5), bw - 4,
-      enabled and theme.colors.text or theme.colors.disabled, 1)
+    -- Never wrap a button label: fall back to the small font when it does not fit.
+    if ui.text_width(f, b.label) > bw - 4 then f = theme.font("s") end
+    local lw = ui.text_width(f, b.label)
+    ui.text_shadow(1, 1, 0, 0, 0, 0.6)
+    theme.set_color(enabled and theme.colors.text or theme.colors.disabled)
+    ui.text(f, b.label, b.x + math.floor((bw - lw) * 0.5), by + math.floor((bw - ui.font_line_height(f)) * 0.5))
   end
 
   local f = theme.font("b")

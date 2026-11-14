@@ -37,8 +37,7 @@ function M.preset(name)
   elseif name == "raid" then
     return {
       hint("move_dir", "hint.move"),
-      hint("sneak_toggle", "hint.sneak"),
-      hint("run_hold", "hint.run"),
+      hint("sneak_toggle", "hint.sneak_run", { action2 = "run_hold" }),
       hint("interact", "hint.interact"),
       hint("squad_wheel", "hint.squad"),
       hint("pause", "hint.pause"),
@@ -131,14 +130,13 @@ local function fallback_glyph(action, device)
   return row and row[device] or nil
 end
 
+-- Primary glyph for a hint item on `device`. Mouse context with no mouse
+-- binding falls back to the keyboard hotkey (then it is the primary glyph, and
+-- no second hotkey glyph is drawn next to it).
 local function resolve_glyph(item, device)
   if item.glyph then
-    if type(item.glyph) == "table" then return item.glyph end
-    if type(item.glyph) == "string" then
-      if item.glyph:sub(1, 4) == "pad:" then return glyphs.pad(item.glyph:sub(5)) end
-      if item.glyph:sub(1, 4) == "key:" then return glyphs.key(item.glyph:sub(5)) end
-      if item.glyph:sub(1, 6) == "mouse:" then return glyphs.mouse(tonumber(item.glyph:sub(7)) or 0) end
-    end
+    local g = glyphs.spec(item.glyph)
+    if g then return g end
   end
   if item.action then
     local spec = glyphs.for_action(item.action, device)
@@ -146,16 +144,22 @@ local function resolve_glyph(item, device)
     local fb = fallback_glyph(item.action, device)
     if fb then return fb end
     if device == "mouse" then
-      -- Mouse context may be an on-screen entry; show the keyboard hotkey too.
       return glyphs.for_action(item.action, "keyboard") or fallback_glyph(item.action, "keyboard")
     end
   end
   return nil
 end
 
-local function hotkey_spec(item, device)
+function M.resolve(item, device)
+  return resolve_glyph(item, device)
+end
+
+-- Small keyboard hotkey drawn next to a mouse glyph. Never when the primary
+-- glyph already is the keyboard one.
+local function hotkey_spec(item, device, primary)
   if device ~= "mouse" or item.action == nil then return nil end
-  return glyphs.for_action(item.action, "keyboard")
+  if primary and primary.kind == "key" then return nil end
+  return glyphs.for_action(item.action, "keyboard") or fallback_glyph(item.action, "keyboard")
 end
 
 local function item_text(item)
@@ -164,12 +168,66 @@ local function item_text(item)
   return i18n.t(item.text, vars)
 end
 
-function M.draw(opts)
+-- Resolve which hints fit and where. Used by draw() and by the probe.
+function M.layout(opts)
   opts = opts or {}
   local entry = M.current()
-  if not entry or #entry.hints == 0 then return end
-
+  if not entry or #entry.hints == 0 then return nil end
   local device = opts.device or M.device()
+  local sw = ui.screen_size()
+  local w = opts.w or sw
+  local f = theme.font("s")
+  local pad_x = 10
+  local gap = 16
+  local usable = w - pad_x * 2
+  local max_items = opts.max_items or 6
+  local items = {}
+  local total = 0
+  local overflow = false
+  local visible = 0
+
+  for i = 1, #entry.hints do
+    local it = entry.hints[i]
+    local show = true
+    if it.show_if ~= nil then
+      if type(it.show_if) == "function" then show = it.show_if() else show = it.show_if end
+    end
+    if show then
+      visible = visible + 1
+      if visible > max_items then overflow = true; break end
+      local gs = resolve_glyph(it, device)
+      local gw, gh = 0, 0
+      if gs then gw, gh = glyphs.measure(gs, 20) end
+      -- optional second glyph (e.g. "Sneak/Run" shows both keys)
+      local gs2, gw2 = nil, 0
+      if it.action2 then
+        gs2 = resolve_glyph({ action = it.action2 }, device)
+        if gs2 then gw2 = glyphs.measure(gs2, 20) end
+      end
+      local hk = (opts.show_hotkeys ~= false) and hotkey_spec(it, device, gs) or nil
+      local kw, kh = 0, 0
+      if hk then kw, kh = glyphs.measure(hk, 16) end
+      local txt = item_text(it)
+      local tw = ui.text_width(f, txt)
+      local iw = gw + (gw2 > 0 and (4 + gw2) or 0) + (gw > 0 and 6 or 0) + kw + (kw > 0 and 6 or 0) + tw
+      local sep = (#items > 0) and gap or 0
+      if total + sep + iw <= usable then
+        items[#items + 1] = { it = it, glyph = gs, gw = gw, gh = gh, glyph2 = gs2, gw2 = gw2, hotkey = hk, kw = kw, kh = kh,
+          text = txt, tw = tw, w = iw }
+        total = total + sep + iw
+      else
+        overflow = true
+      end
+    end
+  end
+  return { items = items, total = total, overflow = overflow, device = device, usable = usable }
+end
+
+function M.draw(opts)
+  opts = opts or {}
+  local lay = M.layout(opts)
+  if not lay then return end
+
   local sw, sh = ui.screen_size()
   local bar = theme.layout.hintbar
   local h = opts.h or bar.h
@@ -186,37 +244,9 @@ function M.draw(opts)
   local lh = ui.font_line_height(f)
   local pad_x = 10
   local gap = 16
-  local usable = w - pad_x * 2
-  local max_items = opts.max_items or 6
-  local items = {}
-  local total = 0
-  local overflow = false
-
-  for i = 1, math.min(#entry.hints, max_items) do
-    local it = entry.hints[i]
-    local show = true
-    if it.show_if ~= nil then
-      if type(it.show_if) == "function" then show = it.show_if() else show = it.show_if end
-    end
-    if show then
-      local gs = resolve_glyph(it, device)
-      local gw, gh = 0, 0
-      if gs then gw, gh = glyphs.measure(gs, 20) end
-      local txt = item_text(it)
-      local tw = ui.text_width(f, txt)
-      local iw = gw + (gw > 0 and 6 or 0) + tw
-      if total + (i > 1 and gap or 0) + iw <= usable then
-        items[#items + 1] = { it = it, glyph = gs, gw = gw, gh = gh, text = txt, tw = tw }
-        total = total + (i > 1 and gap or 0) + iw
-      else
-        overflow = true
-      end
-    end
-  end
-
   local cx = x + pad_x
   local cy = y + math.floor((h - lh) * 0.5)
-  for i, it in ipairs(items) do
+  for i, it in ipairs(lay.items) do
     if i > 1 then cx = cx + gap end
     local gy = y + math.floor((h - it.gh) * 0.5)
     if it.glyph then
@@ -228,21 +258,23 @@ function M.draw(opts)
         ui.rect(cx + it.gw + 1, gy - 2, 1, it.gh + 4)
       end
       glyphs.draw(it.glyph, cx, gy, 20)
-      cx = cx + it.gw + 6
+      cx = cx + it.gw
+      if it.glyph2 then
+        glyphs.draw(it.glyph2, cx + 4, gy, 20)
+        cx = cx + 4 + it.gw2
+      end
+      cx = cx + 6
     end
-    -- Mouse context: keep the keyboard hotkey visible as a small secondary glyph.
-    local hk = hotkey_spec(it.it, device)
-    if hk and opts.show_hotkeys ~= false then
-      local kw, kh = glyphs.measure(hk, 16)
-      glyphs.draw(hk, cx, y + math.floor((h - kh) * 0.5), 16)
-      cx = cx + kw + 6
+    if it.hotkey then
+      glyphs.draw(it.hotkey, cx, y + math.floor((h - it.kh) * 0.5), 16)
+      cx = cx + it.kw + 6
     end
     theme.set_color(theme.colors.text)
     ui.text(f, it.text, cx, cy)
     cx = cx + it.tw
   end
 
-  if overflow then
+  if lay.overflow then
     theme.set_color(theme.colors.text_dim)
     ui.text(f, "…", x + w - pad_x - 10, cy)
   end

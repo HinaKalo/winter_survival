@@ -63,6 +63,7 @@ return {
   ["hint.focus_next"] = "대상 전환",
   ["hint.sneak"] = "잠행",
   ["hint.run"] = "달리기",
+  ["hint.sneak_run"] = "잠행/달리기",
   ["hint.squad"] = "동료 명령",
   ["hint.evacuate"] = "탈출",
   ["hint.attack"] = "공격",

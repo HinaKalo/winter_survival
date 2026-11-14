@@ -63,6 +63,7 @@ return {
   ["hint.focus_next"] = "Next Target",
   ["hint.sneak"] = "Sneak",
   ["hint.run"] = "Run",
+  ["hint.sneak_run"] = "Sneak/Run",
   ["hint.squad"] = "Squad",
   ["hint.evacuate"] = "Evacuate",
   ["hint.attack"] = "Attack",

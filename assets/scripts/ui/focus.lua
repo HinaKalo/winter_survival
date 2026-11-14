@@ -10,6 +10,9 @@ local M = {
   _last_mx = nil,
   _last_my = nil,
   _from_dir = {}, -- [id] = last element id we came from
+  -- Set by a widget during draw when it consumes the next cancel press itself
+  -- (e.g. an ItemGrid holding a picked-up item); reset in begin_frame.
+  cancel_capture = false,
 }
 
 local function top_group()
@@ -68,7 +71,15 @@ function M.clear()
   M._target = nil
 end
 
+-- Move focus to `id` and make it the group's remembered element.
+function M.set_focus(id)
+  local g = (M._target and find_group(M._target)) or top_group()
+  M.current = id
+  if g then g.remember = id end
+end
+
 function M.begin_frame()
+  M.cancel_capture = false
   for i = 1, #M.groups do
     M.groups[i].items = {}
     M.groups[i].by_id = {}
@@ -193,7 +204,7 @@ function M.update(dt)
   local hovered = nil
   for i = #g.items, 1, -1 do
     local it = g.items[i]
-    if point_in(mx, my, it.rect) then
+    if not it.no_hover and point_in(mx, my, it.rect) then
       hovered = it
       break
     end
@@ -244,7 +255,7 @@ function M.update(dt)
   -- Confirm (keyboard/pad)
   if (dev ~= "mouse" or M.visible) and input.pressed("confirm") and cur_elem then
     if cur_elem.enabled == false then
-      kit_audio.sfx("sfx/ui", 0.5, 0.7)
+      kit_audio.sfx("sfx/ui_deny", 0.5, 0.7)
     elseif cur_elem.on_activate then
       kit_audio.sfx("sfx/ui", 0.7, 1.0)
       cur_elem.on_activate()
@@ -252,7 +263,7 @@ function M.update(dt)
   end
 
   -- Cancel (Esc / B / mouse right click)
-  if input.pressed("cancel") and g.on_cancel then
+  if input.pressed("cancel") and g.on_cancel and not M.cancel_capture then
     g.on_cancel()
   end
 end

@@ -6,8 +6,9 @@ local theme = require("ui.theme")
 local focus = require("ui.focus")
 local widgets = require("ui.widgets")
 local hintbar = require("ui.hintbar")
+local glyphs = require("ui.glyphs")
 
-probe.timeout(25)
+probe.timeout(90)
 
 local now = 0
 local function wait(sec)
@@ -22,10 +23,20 @@ local Ctx = {
   step_val = 5,
   radial_result = nil,
   confirm_result = nil,
+  list_cur = 2,
+  grid_events = {},
+  panel_cancel = 0,
+  dis_changes = 0,
+  queue = { q1 = false, q2 = false, q3 = false, qr = false },
+  queue_done = {},     -- order in which the queue requests delivered a result
+  fire = { confirm = 0, radial = 0 },
+  rep_confirm = false,
+  rep_radial = false,
 }
 
 function Ctx:on_enter()
-  focus.push_group("panel_test", { default = "probe_icon" })
+  focus.push_group("panel_test", { default = "probe_icon",
+    on_cancel = function() Ctx.panel_cancel = Ctx.panel_cancel + 1 end })
 end
 
 function Ctx:on_exit()
@@ -48,18 +59,22 @@ function Ctx:draw()
   widgets.icon_button("probe_icon2", { x = 80, y = 24, w = 48, h = 48 }, "key:I", {
     on_click = function() end, badge = "2",
   })
+  widgets.icon_button("probe_icon3", { x = 136, y = 24, w = 48, h = 48 }, "mouse:right", {
+    on_click = function() end, tooltip = { title = "T3", body = "B3" },
+  })
 
   local items = {}
   for i = 1, 12 do
     items[i] = { label = i18n.t("ui.demo.action_craft") .. " " .. i, sub = tostring(i) }
   end
-  widgets.list("probe_list", { x = 24, y = 100, w = 360, h = 160 }, items, 2, { header = "H" })
+  Ctx.list_cur = widgets.list("probe_list", { x = 24, y = 100, w = 360, h = 160 }, items, 2, { header = "H" })
 
   local gitems = {}
   for i = 1, 8 do
     gitems[i] = { label = i18n.t("ui.demo.item_scrap"), qty = i, icon = "pad:a" }
   end
-  widgets.item_grid("probe_grid", { x = 420, y = 100 }, 4, 2, gitems, 1, {})
+  local _, gev = widgets.item_grid("probe_grid", { x = 420, y = 100 }, 4, 2, gitems, 1, {})
+  if gev then Ctx.grid_events[#Ctx.grid_events + 1] = gev end
 
   widgets.progress_bar({ x = 24, y = 290, w = 240, h = 14 }, 50, 100, { show_percent = true })
   widgets.progress_bar({ x = 24, y = 310, w = 240, h = 14 }, 100, 100, { segments = 5 })
@@ -68,8 +83,31 @@ function Ctx:draw()
     on_change = function(v) Ctx.step_val = v end,
   })
   if nchanged then Ctx.step_val = nv end
+  widgets.stepper("probe_step_dis", { x = 24, y = 400, w = 300, h = 40 }, 5, 0, 10, 1, {
+    enabled = false, on_change = function() Ctx.dis_changes = Ctx.dis_changes + 1 end,
+  })
 
   focus.clear_target()
+
+  -- Queue / stale-result scenarios (each id is a separate request).
+  for _, qid in ipairs({ "q1", "q2", "q3" }) do
+    if Ctx.queue[qid] then
+      local r = widgets.modal(qid, { title = qid, body = "queued " .. qid })
+      if r then Ctx.queue[qid] = false; Ctx.queue_done[#Ctx.queue_done + 1] = qid end
+    end
+  end
+  if Ctx.queue.qr then
+    local r = widgets.radial("qr", { items = { { id = "a", label = "A" }, { id = "b", label = "B" } } })
+    if r then Ctx.queue.qr = false; Ctx.queue_done[#Ctx.queue_done + 1] = "qr" end
+  end
+  if Ctx.rep_confirm then
+    local r = widgets.confirm("rep_confirm", { title = "C", body = "x" })
+    if r then Ctx.fire.confirm = Ctx.fire.confirm + 1; Ctx.rep_confirm = false end
+  end
+  if Ctx.rep_radial then
+    local r = widgets.radial("rep_radial", { items = { { id = "a", label = "A" }, { id = "b", label = "B" } } })
+    if r then Ctx.fire.radial = Ctx.fire.radial + 1; Ctx.rep_radial = false end
+  end
 
   if Ctx.show_modal then
     local r = widgets.modal("probe_modal", {
@@ -190,12 +228,248 @@ local function scenario()
   probe.check("radial selected first item", Ctx.radial_result and Ctx.radial_result.action == "select"
     and Ctx.radial_result.item_id == "a")
 
-  -- Large text mode must keep focus reachability and stay in budget.
-  theme.large_text = true
-  wait(0.25)
-  probe.check("large text focus.audit().ok", focus.audit().ok)
-  probe.check("large text quad budget", ui.quad_count() < 4000)
+  -- Radial: sector hit-test matches the drawn layout (north = 1, clockwise,
+  -- sector i centred on its icon) for 8 sectors, and also +-15 degrees around it.
+  local ok8 = true
+  for k = 1, 8 do
+    for _, off in ipairs({ 0, -15, 15 }) do
+      local th = math.rad((k - 1) * 45 + off)
+      if widgets.radial_sector(math.sin(th), -math.cos(th), 8) ~= k then ok8 = false end
+    end
+  end
+  probe.check("radial 8 sectors: north=1 clockwise, centred on icons", ok8)
+  probe.check("radial 4 sectors: east=2 south=3 west=4",
+    widgets.radial_sector(1, 0, 4) == 2 and widgets.radial_sector(0, 1, 4) == 3
+    and widgets.radial_sector(-1, 0, 4) == 4)
+
+  -- List: PageUp/PageDown/Home/End move the focused row and the viewport follows.
+  local function setfocus(id)
+    local gg = focus.groups[#focus.groups]
+    focus.current = id; gg.remember = id; focus.visible = true
+  end
+  local function key(k) probe.tap(k); wait(0.12) end
+  local function in_view(i)
+    local l = widgets._lists["probe_list"]
+    return i > l.scroll and i <= l.scroll + 3
+  end
+  setfocus("probe_list#row1"); wait(0.1)
+  key(keys.PAGE_DOWN)
+  probe.check("list PageDown focuses row 4", focus.current == "probe_list#row4" and Ctx.list_cur == 4)
+  probe.check("list PageDown row stays visible", in_view(4))
+  key(keys.END)
+  probe.check("list End focuses last row", focus.current == "probe_list#row12" and Ctx.list_cur == 12)
+  probe.check("list End row visible", in_view(12))
+  key(keys.PAGE_UP)
+  probe.check("list PageUp focuses row 9", focus.current == "probe_list#row9" and Ctx.list_cur == 9)
+  key(keys.HOME)
+  probe.check("list Home focuses row 1", focus.current == "probe_list#row1" and Ctx.list_cur == 1 and in_view(1))
+  probe.check("empty list returns nil selection", (widgets.list("probe_empty", { x = 0, y = 0, w = 100, h = 80 }, {}, 1, {})) == nil)
+
+  -- Disabled stepper: focusable, but arrows do not edit it.
+  setfocus("probe_step_dis"); wait(0.1)
+  key(keys.RIGHT)
+  key(keys.END)
+  probe.check("disabled stepper does not change", Ctx.dis_changes == 0)
+
+  -- ItemGrid: keyboard pick/move deliver events; cancel is consumed, not forwarded.
+  Ctx.grid_events = {}
+  setfocus("probe_grid#cell1"); wait(0.1)
+  key(keys.ENTER)
+  local gst = widgets._grids["probe_grid"]
+  probe.check("grid Enter picks up + delivers select event", gst.held == 1
+    and Ctx.grid_events[1] and Ctx.grid_events[1].kind == "select")
+  Ctx.panel_cancel = 0
+  key(keys.ESCAPE)
+  local last = Ctx.grid_events[#Ctx.grid_events]
+  probe.check("grid Esc while holding cancels", gst.held == nil and last and last.kind == "cancel")
+  probe.check("grid Esc while holding is not forwarded to the panel", Ctx.panel_cancel == 0)
+  key(keys.ESCAPE)
+  probe.check("Esc without a held item reaches the panel", Ctx.panel_cancel == 1)
+  Ctx.grid_events = {}
+  key(keys.ENTER)
+  key(keys.RIGHT)
+  key(keys.ENTER)
+  local mv = Ctx.grid_events[#Ctx.grid_events]
+  probe.check("grid keyboard move event delivered", mv and mv.kind == "move" and mv.from == 1 and mv.to == 2)
+  -- Mouse: pick up, right click cancels (no transfer).
+  Ctx.grid_events = {}
+  probe.mouse_move(420 + 24, 100 + 24)
+  wait(0.1)
+  probe.click(0)
+  wait(0.15)
+  probe.check("grid mouse click picks up", gst.held == 1)
+  probe.click(1)
+  wait(0.15)
+  local kinds = {}
+  for _, e in ipairs(Ctx.grid_events) do kinds[#kinds + 1] = e.kind end
+  local kj = table.concat(kinds, ",")
+  probe.check("grid right click while holding cancels without transfer",
+    gst.held == nil and kj:find("cancel") and not kj:find("transfer"))
+  probe.mouse_move(900, 650)
+  wait(0.1)
+
+  -- ui_info (H) pins the focused element's tooltip until dismissed.
+  setfocus("probe_icon3"); wait(0.1)
+  probe.check("no tooltip before H (focus delay not reached)", widgets._tt_drawn_id ~= "probe_icon3#tip")
+  key(keys.H)
+  probe.check("H shows the focused tooltip immediately", widgets._tt_drawn_id == "probe_icon3#tip")
+  wait(0.8)
+  probe.check("H tooltip stays", widgets._tt_drawn_id == "probe_icon3#tip" and widgets._info_owner == "probe_icon3")
+  key(keys.H)
+  probe.check("H again dismisses", widgets._info_owner == nil)
+  setfocus("probe_icon"); wait(0.1)
+
+  -- Glyph names (PANEL-PLAN §3).
+  local gl = glyphs.spec
+  probe.check("glyph mouse:left/right/middle -> 0/1/2",
+    gl("mouse:left").btn == 0 and gl("mouse:right").btn == 1 and gl("mouse:middle").btn == 2)
+  probe.check("glyph mouse:move / mouse:drag", gl("mouse:move").mode == "move" and gl("mouse:drag").mode == "drag"
+    and gl("mouse:drag").btn == 0)
+  probe.check("glyph key:/pad: parse", gl("key:ESCAPE").kind == "key" and gl("pad:rb").kind == "pad_rb")
+  probe.check("hintbar item glyph mouse:right parses", hintbar.resolve({ glyph = "mouse:right" }, "keyboard").btn == 1)
+
+  -- Hint bar: icon types per device (menu preset), no duplicate keyboard glyph in mouse mode.
+  hintbar.push("menu")
+  local function kinds_for(dev)
+    local lay = hintbar.layout({ device = dev })
+    local out = {}
+    for _, it in ipairs(lay.items) do out[#out + 1] = it.glyph and it.glyph.kind or "none" end
+    return out, lay
+  end
+  local kb = kinds_for("keyboard")
+  probe.check("hint icons keyboard = key caps", #kb == 4 and kb[1] == "key" and kb[2] == "key" and kb[3] == "key" and kb[4] == "key")
+  local pd = kinds_for("pad")
+  probe.check("hint icons pad = a, b, rb, y", pd[1] == "pad_a" and pd[2] == "pad_b" and pd[3] == "pad_rb" and pd[4] == "pad_y")
+  local ms, mlay = kinds_for("mouse")
+  probe.check("hint icons mouse = left, right, then keyboard fallback", ms[1] == "mouse" and ms[2] == "mouse"
+    and mlay.items[1].glyph.btn == 0 and mlay.items[2].glyph.btn == 1 and ms[3] == "key" and ms[4] == "key")
+  local dup = false
+  for _, name in ipairs({ "home_idle", "home_focus", "raid", "combat", "menu", "dialog", "drag", "cursor" }) do
+    hintbar.clear()
+    hintbar.push(name)
+    local lay = hintbar.layout({ device = "mouse" })
+    for _, it in ipairs(lay.items) do
+      if it.hotkey and it.glyph and it.glyph.kind == "key" then dup = true end
+    end
+  end
+  probe.check("hint bar mouse mode never draws the keyboard glyph twice", not dup)
+  hintbar.clear()
+  hintbar.push("raid")
+  local rk = hintbar.layout({ device = "keyboard" })
+  probe.check("hint bar raid: <= 6 items, sneak/run share one entry", #rk.items <= 6 and #hintbar.preset("raid") <= 6)
+  local seq = {}
+  for _, it in ipairs(rk.items) do seq[#seq + 1] = it.it.action end
+  probe.check("hint bar raid order", seq[1] == "move_dir" and seq[2] == "sneak_toggle" and seq[3] == "interact")
+  hintbar.clear()
+  hintbar.push("raid")
+  local many = {}
+  for i = 1, 8 do many[i] = { action = "confirm", text = "hint.confirm" } end
+  hintbar.push("x", many)
+  local capped = hintbar.layout({ device = "keyboard" })
+  probe.check("hint bar caps at 6 items and flags overflow", #capped.items == 6 and capped.overflow)
+  hintbar.pop()
+  hintbar.clear()
+
+  -- Modal / radial: a result returned on the draw path is not delivered again.
+  Ctx.rep_confirm = true
+  wait(0.3)
+  setfocus("rep_confirm#btn#confirm")
+  focus.current = "rep_confirm#btn#cancel"
+  key(keys.ENTER)
+  wait(0.2)
+  probe.check("confirm result delivered once", Ctx.fire.confirm == 1 and not widgets.modal_is_open("rep_confirm"))
+  Ctx.rep_confirm = true
+  wait(0.3)
+  probe.check("reopened confirm waits for input (no stale result)", Ctx.fire.confirm == 1 and widgets.modal_is_open("rep_confirm"))
+  key(keys.ESCAPE)
+  wait(0.2)
+  probe.check("Esc path delivers the cancel result once", Ctx.fire.confirm == 2 and not widgets.modal_is_open("rep_confirm"))
+  wait(0.3)
+  probe.check("cancel result is not repeated", Ctx.fire.confirm == 2)
+  Ctx.rep_radial = true
+  wait(0.3)
+  key(keys.ENTER)
+  wait(0.2)
+  probe.check("radial result delivered once", Ctx.fire.radial == 1 and not widgets.radial_is_open("rep_radial"))
+  Ctx.rep_radial = true
+  wait(0.3)
+  probe.check("reopened radial waits for input (no stale result)", Ctx.fire.radial == 1 and widgets.radial_is_open("rep_radial"))
+  key(keys.ESCAPE)
+  wait(0.2)
+  probe.check("radial Esc delivers cancel once", Ctx.fire.radial == 2 and not widgets.radial_is_open("rep_radial"))
+
+  -- Modal queue (FIFO), shared with the radial.
+  Ctx.queue_done = {}
+  Ctx.queue.q1, Ctx.queue.q2, Ctx.queue.q3, Ctx.queue.qr = true, true, true, true
+  wait(0.3)
+  probe.check("queue: first request opens, the rest wait",
+    widgets.modal_is_open("q1") and not widgets.modal_is_open("q2")
+    and not widgets.modal_is_open("q3") and not widgets.radial_is_open("qr"))
+  probe.check("queue holds the 3 waiting requests", #widgets._queue == 3)
+  key(keys.ENTER)
+  wait(0.2)
+  probe.check("queue: q2 opens after q1 closes", widgets.modal_is_open("q2") and not widgets.modal_is_open("q1"))
+  key(keys.ENTER)
+  wait(0.2)
+  probe.check("queue: q3 opens after q2 closes", widgets.modal_is_open("q3"))
+  key(keys.ENTER)
+  wait(0.2)
+  probe.check("queue: radial opens last", widgets.radial_is_open("qr"))
+  key(keys.ENTER)
+  wait(0.2)
+  probe.check("queue results in FIFO order", table.concat(Ctx.queue_done, ",") == "q1,q2,q3,qr")
+  probe.check("queue drained, no overlay left", not widgets.any_modal_open() and not widgets.radial_is_open("qr")
+    and #widgets._queue == 0)
+  probe.check("panel audit after queue", focus.audit().ok)
+
+  -- Three languages x standard/large text: quad budget, audit, hint bar fit, text fit.
+  local orig_lang = i18n.get_lang()
+  local sw, sh = ui.screen_size()
+  for _, lang in ipairs({ "zh", "en", "ko" }) do
+    for _, large in ipairs({ false, true }) do
+      local tag = lang .. (large and "/large" or "/normal")
+      i18n.set_lang(lang)
+      theme.large_text = large
+      Ctx.show_confirm = true
+      wait(0.3)
+      probe.check("[" .. tag .. "] quad budget with modal open", ui.quad_count() < (large and 4000 or 3000))
+      probe.check("[" .. tag .. "] confirm opened", widgets.modal_is_open("probe_confirm"))
+      -- modal chrome fits the screen
+      local fs = theme.font("s")
+      local ft = theme.font("t")
+      local body_h = ui.text_measure(fs, i18n.t("ui.demo.body_confirm"), 520 - 48).h
+      local need = 24 + ui.font_line_height(ft) + 12 + body_h + 20 + 40 + 24
+      probe.check("[" .. tag .. "] confirm body fits modal", need <= sh - 64)
+      probe.check("[" .. tag .. "] title fits modal width",
+        ui.text_width(ft, i18n.t("ui.demo.confirm")) <= 520 - 48)
+      probe.tap(keys.ESCAPE)
+      wait(0.25)
+      Ctx.confirm_result = nil
+      -- hint bar: every preset fits on every device without dropping items
+      local fits = true
+      local widest = 0
+      for _, name in ipairs({ "home_idle", "home_focus", "raid", "combat", "menu", "dialog", "drag", "cursor" }) do
+        for _, dev in ipairs({ "keyboard", "mouse", "pad" }) do
+          hintbar.clear()
+          hintbar.push(name)
+          local lay = hintbar.layout({ device = dev })
+          widest = math.max(widest, lay.total)
+          if lay.overflow or lay.total > sw - 20 then fits = false end
+        end
+      end
+      hintbar.clear()
+      probe.check("[" .. tag .. "] every hint preset fits the bar (widest " .. math.floor(widest) .. ")", fits)
+      -- ellipsis never exceeds its box
+      local fb = theme.font("b")
+      local longest = i18n.t("ui.demo.body_modal") .. i18n.t("ui.demo.tip_body")
+      probe.check("[" .. tag .. "] ellipsize respects width",
+        ui.text_width(fb, widgets.ellipsize(fb, longest, 160)) <= 160)
+      probe.check("[" .. tag .. "] focus.audit().ok", focus.audit().ok)
+    end
+  end
+  i18n.set_lang(orig_lang)
   theme.large_text = false
+  wait(0.2)
 
   scene.pop()
   wait(0.1)
