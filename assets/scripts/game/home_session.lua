@@ -281,7 +281,8 @@ function M.actions(s, cid)
   local can_move, why = in_day, "not_day"
   if in_day then
     if ch.activity == "sleep" then can_move, why = false, "asleep"
-    elseif ch.activity == "out" then can_move, why = false, "away" end
+    elseif ch.activity == "out" then can_move, why = false, "away"
+    elseif ch.job then can_move, why = false, "busy" end
   end
   for _, rid in ipairs(state.home.room_order) do
     if rid ~= ch.room then
