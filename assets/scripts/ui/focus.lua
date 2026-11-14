@@ -13,6 +13,7 @@ local M = {
   -- Set by a widget during draw when it consumes the next cancel press itself
   -- (e.g. an ItemGrid holding a picked-up item); reset in begin_frame.
   cancel_capture = false,
+  frame = 0, -- draw frames since start (begin_frame); widgets use it to detect call gaps
 }
 
 local function top_group()
@@ -79,6 +80,7 @@ function M.set_focus(id)
 end
 
 function M.begin_frame()
+  M.frame = M.frame + 1
   M.cancel_capture = false
   for i = 1, #M.groups do
     M.groups[i].items = {}

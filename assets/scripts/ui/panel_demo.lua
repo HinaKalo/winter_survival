@@ -149,12 +149,13 @@ function _draw()
   end
 
   -- Progress bars.
-  local pb_y = grid_y + lab + 120
-  widgets.label(theme.font("s"), i18n.t("ui.demo.progress"), 24, pb_y, 260, theme.colors.text_dim, 0)
-  widgets.progress_bar({ x = 24, y = pb_y + lab, w = 300, h = 18 }, 35, 100, { show_percent = true, color = theme.colors.cold })
-  widgets.progress_bar({ x = 24, y = pb_y + lab + 26, w = 300, h = 18 }, 62, 100,
+  local pb_y = 320 + lab + 40 + 24 -- right column, below the stepper (clear of the hint bar)
+  widgets.label(theme.font("s"), i18n.t("ui.demo.progress"), 470, pb_y, 260, theme.colors.text_dim, 0)
+  local bh = math.max(18, ui.font_line_height(theme.font("s")) + 2) -- V1: bar >= text line + 2
+  widgets.progress_bar({ x = 470, y = pb_y + lab, w = 300, h = bh }, 35, 100, { show_percent = true, color = theme.colors.cold })
+  widgets.progress_bar({ x = 470, y = pb_y + lab + bh + 8, w = 300, h = bh }, 62, 100,
     { text = i18n.t("ui.demo.progress_label"), color = theme.colors.accent })
-  widgets.progress_bar({ x = 24, y = pb_y + lab + 52, w = 300, h = 18 }, 5, 5,
+  widgets.progress_bar({ x = 470, y = pb_y + lab + (bh + 8) * 2, w = 300, h = bh }, 5, 5,
     { show_percent = true, color = theme.colors.ok, segments = 5 })
 
   -- Stepper (right column, clear of the hint bar).
