@@ -44,6 +44,13 @@ end
 
 function M:update(dt)
   M._t = M._t + dt
+  -- Dev / screenshot hook: WS_NEW_GAME=1 starts the home scene without input.
+  if os.getenv("WS_NEW_GAME") == "1" and M._t > 0.2 then M._start = true end
+  if M._start then
+    M._start = false
+    scene.replace(require("scenes.home"))
+    return
+  end
   local sw, sh = ui.screen_size()
   if not M._snow then
     init_snow(sw, sh)
@@ -100,7 +107,7 @@ function M:draw()
   local items = {
     { id = "btn_continue", key = "title.continue", enabled = false, variant = "default" },
     { id = "btn_new_game", key = "title.new_game", enabled = true, variant = "primary",
-      action = function() widgets.show_toast(i18n.t("title.stub_notice"), 2.0) end },
+      action = function() M._start = true end },
     { id = "btn_load", key = "title.load", enabled = true, variant = "default",
       action = function() widgets.show_toast(i18n.t("title.stub_notice"), 2.0) end },
     { id = "btn_settings", key = "title.settings", enabled = true, variant = "default",
