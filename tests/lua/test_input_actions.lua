@@ -434,6 +434,7 @@ end
 -- ---------------------------------------------------------------- text
 
 function T.i18n_keys_exist()
+  i18n.tables = {} -- test_core installs fake tables; reload the real files
   i18n.init("zh")
   local missing = {}
   local keys_needed = { "rebind.hold" }
