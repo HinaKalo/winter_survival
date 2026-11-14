@@ -432,3 +432,12 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 | Q13 | CI verify 任务的归档规则增加 `out/balance/report.json`、`tests/fixtures/*.sav`、`tests/fixtures/manifest.lua`，作为 W0 的一项 CI 改动（先写失败测试） | 主代理 |
 | 流程 | 测试先行、CI 全绿、Codex 审查（见 §1.2） | 用户（2026-11-14） |
 
+
+### 9.3 W0 Q13 归档审查（2026-11-14）
+
+实现 ecd17c8（coder-haiku）。Codex FAIL 1 条，裁决：
+
+| 编号 | 问题 | 裁决 | 测试 |
+|---|---|---|---|
+| A1 | `verify_steps.main` 在 zig 不存在 / 没有 `build.zig` 时 `return 2`，不归档 | 不接受：两者是基础设施错误，发生在任何步骤之前，本轮不可能产出报告或夹具 | `test_ci_archive` 注释说明 |
+| A2 | 探针选择失败分支的归档无测试 | 接受（缺测试，实现已覆盖） | `test_ci_archive.test_main_collects_on_probe_selection_error` |
