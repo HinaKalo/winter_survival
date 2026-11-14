@@ -472,7 +472,7 @@ class ArtTests(RepoCopyCase):
         p = self.root / "assets_src/art.json"
         a = json.loads(p.read_text())
         for e in a["art"]:
-            if e["name"] == "hero":
+            if e["name"] == "char_placeholder":
                 e["source"] = source
         p.write_text(json.dumps(a))
 
@@ -480,10 +480,10 @@ class ArtTests(RepoCopyCase):
         self.set_source()
         src = self.tmp / "in"
         src.mkdir()
-        PILImage.new("RGBA", (64, 64)).save(src / "hero.png")
-        before = (self.root / "assets/sprites/hero.png").read_bytes()
+        PILImage.new("RGBA", (64, 64)).save(src / "char_placeholder.png")
+        before = (self.root / "assets/sprites/char_placeholder.png").read_bytes()
         self.assertEqual(A.art_import(self.root, src, None), 1)
-        self.assertEqual((self.root / "assets/sprites/hero.png").read_bytes(), before)
+        self.assertEqual((self.root / "assets/sprites/char_placeholder.png").read_bytes(), before)
 
     def test_missing_file(self):
         self.set_source()
@@ -495,9 +495,10 @@ class ArtTests(RepoCopyCase):
         self.set_source()
         src = self.tmp / "in"
         src.mkdir()
-        PILImage.new("RGBA", (128, 192), (10, 20, 30, 255)).save(src / "hero.png")
+        PILImage.new("RGBA", (512, 768), (10, 20, 30, 255)).save(src / "char_placeholder.png")
         self.assertEqual(A.art_import(self.root, src, None), 0)
-        self.assertEqual((self.root / "assets/sprites/hero.png").read_bytes(), (src / "hero.png").read_bytes())
+        self.assertEqual((self.root / "assets/sprites/char_placeholder.png").read_bytes(),
+                         (src / "char_placeholder.png").read_bytes())
         # palette in master.json shape (object of lists) rejects off-palette colours
         (self.root / "pal.json").write_text(json.dumps({"a": ["#0A141E"], "b": ["#FFFFFF"]}))
         p = self.root / "assets_src/art.json"
@@ -515,12 +516,12 @@ class ArtTests(RepoCopyCase):
             p = self.root / "assets_src/art.json"
             a = json.loads(p.read_text())
             for e in a["art"]:
-                if e["name"] == "hero":
+                if e["name"] == "char_placeholder":
                     e["dest"] = bad
             p.write_text(json.dumps(a))
             src = self.tmp / "in"
             src.mkdir(exist_ok=True)
-            PILImage.new("RGBA", (128, 192), (10, 20, 30, 255)).save(src / "hero.png")
+            PILImage.new("RGBA", (512, 768), (10, 20, 30, 255)).save(src / "char_placeholder.png")
             with self.assertRaises(A.AssetError, msg=repr(bad)):
                 A.art_import(self.root, src, None)
             self.assertTrue(any("bad dest" in e for e in self.errors()), repr(bad))

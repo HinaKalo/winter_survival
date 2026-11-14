@@ -1,16 +1,13 @@
-//! 图形层：瓦片图集、精灵表、世界渲染器。
-//!
-//! 设计要点（见 docs/PLAN.md 第 0 节）：
-//! - 真 3D 世界 + 深度缓冲，精灵用 alpha_cutoff 镂空，不做手工排序；
-//! - 瓦片批次是静态的，仅在 `map.dirty` 时重建；精灵批次每帧重建；
-//! - 世界投影左乘深度重映射矩阵，使 HUD（Delve 2D API）永远在世界之上。
+//! 图形层：分块瓦片网格、覆盖层、精灵表、世界渲染器。
 const std = @import("std");
+const builtin = @import("builtin");
 const delve = @import("delve");
 const math = delve.math;
 const colors = delve.colors;
 const debug = delve.debug;
 const graphics = delve.platform.graphics;
 const assets = delve.api.assets;
+const images = delve.images;
 const batcher = delve.graphics.batcher;
 const sprites = delve.graphics.sprites;
 const Rect = delve.spatial.Rect;
@@ -23,15 +20,24 @@ const Allocator = std.mem.Allocator;
 
 const camera_mod = @import("camera.zig");
 const tilemap = @import("tilemap.zig");
+const tilemesh = @import("tilemesh.zig");
+const lightmap = @import("lightmap.zig");
+const overlay = @import("overlay.zig");
 const world_mod = @import("world.zig");
 const coords = @import("coords.zig");
 const IsoCamera = camera_mod.IsoCamera;
 const TileMap = tilemap.TileMap;
+const LightMap = lightmap.LightMap;
+const Overlays = overlay.Overlays;
 const World = world_mod.World;
 pub const GridPos = coords.GridPos;
 
-/// 在图集中取第 (col,row) 格的 UV 区域，四周内缩半个像素防止渗色。
-/// TextureRegion 的 v 方向：v=0 为图像顶部（与批次器的顶点映射一致，无需 flip_tex_y）。
+comptime {
+    const V = graphics.PackedVertex;
+    std.debug.assert(@hasField(V, "x") and @hasField(V, "y") and @hasField(V, "z") and
+        @hasField(V, "color") and @hasField(V, "u") and @hasField(V, "v"));
+}
+
 fn gridRegion(col: u32, row: u32, cell_w: u32, cell_h: u32, tex_w: u32, tex_h: u32) TextureRegion {
     const tw: f32 = @floatFromInt(@max(tex_w, 1));
     const th: f32 = @floatFromInt(@max(tex_h, 1));
@@ -80,45 +86,79 @@ pub const SpriteSheet = struct {
     }
 };
 
-/// 假光照系数
-const light_top: f32 = 1.0;
-const light_x: f32 = 0.78;
-const light_z: f32 = 0.62;
-
-/// 单个批次的四边形预算（Delve 上限约 10922 个）
 pub const max_quads_per_batch: u32 = 10_000;
+
+const AlphaMask = struct {
+    w: u32,
+    h: u32,
+    alpha: []u8,
+};
+
+const ChunkBatch = struct {
+    batch: ?batcher.Batcher = null,
+    bounds: tilemesh.Aabb = .{ .min = Vec3.zero, .max = Vec3.zero },
+    quads: u32 = 0,
+};
+
+/// 把一个 3D 四边形（4 顶点，已含各自颜色）追加到分块批次，走 Batcher 的 vertex_pos / index_pos 记账，
+/// 与 `Batcher.addQuad` 的约定一致（+4 顶点、+6 索引；启动自检 selfCheckBatcher 校验该约定）。
+/// Batcher 公开 API 只有 2D addQuad（单色、z=0），无法表达每顶点光照色的立体面，故在此补一个。
+fn pushQuad3d(b: *batcher.Batcher, verts: [4]graphics.PackedVertex) void {
+    if (b.vertex_pos + 4 > b.vertex_buffer.len or b.index_pos + 6 > b.index_buffer.len) return;
+    const base: u32 = @intCast(b.vertex_pos);
+    for (verts, 0..) |v, i| b.vertex_buffer[b.vertex_pos + i] = v;
+    const idx = [6]u32{ 0, 1, 2, 0, 2, 3 };
+    for (idx, 0..) |k, i| b.index_buffer[b.index_pos + i] = base + k;
+    b.vertex_pos += 4;
+    b.index_pos += 6;
+}
+
+/// ENGINE-PLAN A7.1 启动自检：一次 addRectangle 之后 vertex_pos 必须 +4、index_pos 必须 +6，
+/// 否则 Batcher 的记账约定与本模块假设不符（升级 Delve 后可能发生）。
+fn selfCheckBatcher() !void {
+    var b = try batcher.Batcher.init(.{ .min_vertices = 16, .min_indices = 24 });
+    defer b.deinit();
+    const v0 = b.vertex_pos;
+    const idx0 = b.index_pos;
+    b.addRectangle(Rect.new(Vec2.zero, Vec2.new(1, 1)), TextureRegion.default(), colors.white);
+    if (b.vertex_pos != v0 + 4 or b.index_pos != idx0 + 6) {
+        debug.fatal("iso: Batcher self-check failed: addRectangle advanced vertex_pos by {d} (want 4), index_pos by {d} (want 6)", .{ b.vertex_pos - v0, b.index_pos - idx0 });
+        return error.BatcherSelfCheckFailed;
+    }
+}
 
 pub const WorldRenderer = struct {
     allocator: Allocator,
-    tile_batch: batcher.SpriteBatcher,
     sprite_batch: batcher.SpriteBatcher,
-    hl_batch: batcher.SpriteBatcher,
+    ov_batch: batcher.SpriteBatcher,
+    chunks: std.ArrayList(ChunkBatch) = .empty,
+    chunk_quad_scratch: std.ArrayList(tilemesh.Quad) = .empty,
     atlas: ?TileAtlas = null,
     sheets: std.ArrayList(SpriteSheet) = .empty,
-    /// 每个纹理句柄一个材质（NEAREST、不剔除、alpha_cutoff 0.5、不混合）
     materials: std.AutoHashMap(u32, graphics.Material),
+    ov_materials: std.AutoHashMap(u32, graphics.Material),
+    alpha_masks: std.AutoHashMap(u32, AlphaMask),
     hl_material: graphics.Material,
-    highlight: ?GridPos = null,
-    highlight_color: Color = colors.white,
-    /// 路径 -> 纹理句柄缓存。Delve 的 assets 以字符串"指针"为键，
-    /// 这里用稳定的自有字符串，避免 Lua 字符串被 GC 后地址复用导致取错纹理。
+    /// 世界染色：绘制时写入材质的 draw_color（shader 里与顶点色相乘），不烘进顶点
+    tint: Color = colors.white,
+    /// 调试构建：每个缓冲每帧最多 apply 一次（key = 缓冲地址，value = 最后一次 apply 的帧号）
+    frame: u64 = 0,
+    apply_frames: std.AutoHashMap(usize, u64),
     texture_cache: std.StringHashMap(u32),
-    /// 各批次本帧已加入的四边形数及是否已警告（Delve 单批次上限 65536 索引）
     tile_quads: u32 = 0,
     sprite_quads: u32 = 0,
-    hl_quads: u32 = 0,
+    chunks_rebuilt_last: u32 = 0,
+    chunks_drawn_last: u32 = 0,
     warned_tiles: bool = false,
     warned_sprites: bool = false,
 
     pub fn init(allocator: Allocator) !WorldRenderer {
-        var tile_batch = try batcher.SpriteBatcher.init(.{});
-        errdefer tile_batch.deinit();
         var sprite_batch = try batcher.SpriteBatcher.init(.{});
         errdefer sprite_batch.deinit();
-        var hl_batch = try batcher.SpriteBatcher.init(.{});
-        errdefer hl_batch.deinit();
+        var ov_batch = try batcher.SpriteBatcher.init(.{});
+        errdefer ov_batch.deinit();
+        try selfCheckBatcher();
 
-        // 高亮：半透明混合，不写深度
         const hl_material = try graphics.Material.init(.{
             .texture_0 = graphics.tex_white,
             .cull_mode = .NONE,
@@ -129,22 +169,33 @@ pub const WorldRenderer = struct {
 
         return .{
             .allocator = allocator,
-            .tile_batch = tile_batch,
             .sprite_batch = sprite_batch,
-            .hl_batch = hl_batch,
+            .ov_batch = ov_batch,
             .materials = std.AutoHashMap(u32, graphics.Material).init(allocator),
+            .ov_materials = std.AutoHashMap(u32, graphics.Material).init(allocator),
+            .alpha_masks = std.AutoHashMap(u32, AlphaMask).init(allocator),
             .hl_material = hl_material,
+            .apply_frames = std.AutoHashMap(usize, u64).init(allocator),
             .texture_cache = std.StringHashMap(u32).init(allocator),
         };
     }
 
     pub fn deinit(self: *WorldRenderer) void {
-        self.tile_batch.deinit();
+        self.dropChunks();
+        self.chunks.deinit(self.allocator);
+        self.chunk_quad_scratch.deinit(self.allocator);
         self.sprite_batch.deinit();
-        self.hl_batch.deinit();
+        self.ov_batch.deinit();
+        self.apply_frames.deinit();
         var it = self.materials.valueIterator();
         while (it.next()) |m| m.deinit();
         self.materials.deinit();
+        var oit = self.ov_materials.valueIterator();
+        while (oit.next()) |m| m.deinit();
+        self.ov_materials.deinit();
+        var ait = self.alpha_masks.valueIterator();
+        while (ait.next()) |am| self.allocator.free(am.alpha);
+        self.alpha_masks.deinit();
         self.hl_material.deinit();
         self.sheets.deinit(self.allocator);
         var kit = self.texture_cache.keyIterator();
@@ -152,16 +203,25 @@ pub const WorldRenderer = struct {
         self.texture_cache.deinit();
     }
 
-    /// 热重载时调用：清掉图集 / 精灵表 / 高亮（材质与纹理缓存保留，仍然有效）。
+    pub fn dropChunks(self: *WorldRenderer) void {
+        for (self.chunks.items) |*c| {
+            if (c.batch) |*b| b.deinit();
+        }
+        self.chunks.clearRetainingCapacity();
+        self.tile_quads = 0;
+    }
+
     pub fn resetResources(self: *WorldRenderer) void {
         self.atlas = null;
         self.sheets.clearRetainingCapacity();
-        self.highlight = null;
-        self.tile_batch.reset();
-        self.tile_batch.apply();
+        self.tint = colors.white;
+        self.dropChunks();
     }
 
-    /// 通过路径取得纹理句柄（0 = 失败）。同一路径只加载一次。
+    pub fn setTint(self: *WorldRenderer, c: Color) void {
+        self.tint = c;
+    }
+
     pub fn loadTexture(self: *WorldRenderer, path: []const u8) u32 {
         if (self.texture_cache.get(path)) |h| return h;
         const owned = self.allocator.dupeZ(u8, path) catch return 0;
@@ -170,6 +230,17 @@ pub const WorldRenderer = struct {
             self.allocator.free(owned);
             return 0;
         }
+        if (!self.alpha_masks.contains(h)) {
+            if (assets._getImageFromHandle(h)) |im| {
+                const npx = @as(usize, im.width) * im.height;
+                if (self.allocator.alloc(u8, npx)) |alpha| {
+                    for (0..npx) |i| alpha[i] = im.data[i * 4 + 3];
+                    self.alpha_masks.put(h, .{ .w = im.width, .h = im.height, .alpha = alpha }) catch {
+                        self.allocator.free(alpha);
+                    };
+                } else |_| {}
+            }
+        }
         self.texture_cache.put(owned[0..path.len], h) catch {
             self.allocator.free(owned);
             return h;
@@ -177,7 +248,27 @@ pub const WorldRenderer = struct {
         return h;
     }
 
-    /// 取（或创建）纹理句柄对应的材质
+    pub fn alphaAt(self: *const WorldRenderer, sheet_id: u32, frame: u16, flip: bool, u_in: f32, v_in: f32) ?u8 {
+        if (sheet_id == 0 or sheet_id > self.sheets.items.len) return null;
+        if (!std.math.isFinite(u_in) or !std.math.isFinite(v_in)) return null;
+        const sheet = self.sheets.items[sheet_id - 1];
+        const mask = self.alpha_masks.get(sheet.texture_handle) orelse return null;
+        if (sheet.frame_w == 0 or sheet.frame_h == 0 or mask.w == 0 or mask.h == 0) return null;
+
+        const u = std.math.clamp(u_in, 0.0, 1.0);
+        const v = std.math.clamp(v_in, 0.0, 1.0);
+        const cols = @max(sheet.cols, 1);
+        const col: u32 = frame % cols;
+        const row: u32 = @min(frame / cols, if (sheet.rows > 0) sheet.rows - 1 else 0);
+        const fu = if (flip) 1.0 - u else u;
+        const lx: u32 = @min(sheet.frame_w - 1, @as(u32, @intFromFloat(fu * @as(f32, @floatFromInt(sheet.frame_w)))));
+        const ly: u32 = @min(sheet.frame_h - 1, @as(u32, @intFromFloat(v * @as(f32, @floatFromInt(sheet.frame_h)))));
+        const px = col * sheet.frame_w + lx;
+        const py = row * sheet.frame_h + ly;
+        if (px >= mask.w or py >= mask.h) return null;
+        return mask.alpha[@as(usize, py) * mask.w + px];
+    }
+
     fn materialFor(self: *WorldRenderer, handle: u32) ?graphics.Material {
         if (self.materials.get(handle)) |m| return m;
         const tex = assets._getTextureFromHandle(handle) orelse return null;
@@ -195,123 +286,230 @@ pub const WorldRenderer = struct {
         return mat;
     }
 
+    fn overlayMaterialFor(self: *WorldRenderer, handle: u32) ?graphics.Material {
+        if (self.ov_materials.get(handle)) |m| return m;
+        const tex = assets._getTextureFromHandle(handle) orelse return null;
+        const mat = graphics.Material.init(.{
+            .texture_0 = tex,
+            .cull_mode = .NONE,
+            .blend_mode = .BLEND,
+            .depth_write_enabled = false,
+            .samplers = &[_]graphics.FilterMode{.NEAREST},
+        }) catch return null;
+        self.ov_materials.put(handle, mat) catch {
+            var m = mat;
+            m.deinit();
+            return null;
+        };
+        return mat;
+    }
+
     pub fn setTileAtlas(self: *WorldRenderer, atlas: TileAtlas) !void {
         self.atlas = atlas;
         _ = self.materialFor(atlas.texture_handle) orelse return error.TextureUnavailable;
+        self.dropChunks();
     }
 
     pub fn addSheet(self: *WorldRenderer, sheet: SpriteSheet) !u32 {
+        for (self.sheets.items, 0..) |s, i| {
+            if (s.texture_handle == sheet.texture_handle and s.frame_w == sheet.frame_w and s.frame_h == sheet.frame_h) {
+                return @intCast(i + 1);
+            }
+        }
         _ = self.materialFor(sheet.texture_handle) orelse return error.TextureUnavailable;
         try self.sheets.append(self.allocator, sheet);
         return @intCast(self.sheets.items.len);
     }
 
-    pub fn setHighlight(self: *WorldRenderer, tile: ?GridPos, color: Color) void {
-        self.highlight = tile;
-        self.highlight_color = color;
+    /// 调试构建断言：同一缓冲一帧内只能 apply 一次（sokol 的 update_buffer 每帧每缓冲限一次）。
+    fn noteApply(self: *WorldRenderer, key: usize) void {
+        if (builtin.mode != .Debug) return;
+        const gop = self.apply_frames.getOrPut(key) catch return;
+        if (gop.found_existing and gop.value_ptr.* == self.frame) {
+            debug.fatal("iso: buffer {x} applied twice in frame {d}", .{ key, self.frame });
+            return;
+        }
+        gop.value_ptr.* = self.frame;
     }
 
-    pub fn draw(self: *WorldRenderer, map: *TileMap, world: *World, cam: *IsoCamera) void {
-        if (self.atlas != null and map.dirty) {
-            self.rebuildTiles(map);
+    fn applyBatcher(self: *WorldRenderer, b: *batcher.Batcher) void {
+        self.noteApply(@intFromPtr(b));
+        b.apply();
+    }
+
+    fn applySprites(self: *WorldRenderer, sb: *batcher.SpriteBatcher) void {
+        self.noteApply(@intFromPtr(sb));
+        sb.apply();
+    }
+
+    /// 把当前世界染色写入所有世界材质（材质 state 是共享指针，分块与精灵批次同时生效）。
+    fn applyTint(self: *WorldRenderer) void {
+        var it = self.materials.valueIterator();
+        while (it.next()) |m| m.state.params.draw_color = self.tint;
+    }
+
+    pub fn draw(self: *WorldRenderer, map: *TileMap, world: *World, cam: *IsoCamera, lm: *const LightMap, ov: *Overlays) void {
+        self.frame +%= 1;
+        self.chunks_rebuilt_last = 0;
+        self.chunks_drawn_last = 0;
+        if (self.atlas != null) {
+            self.ensureChunks(map, lm);
             map.dirty = false;
         }
+        self.rebuildOverlays(map, ov);
         self.rebuildSprites(world, cam);
-        self.rebuildHighlight(map);
+        self.applyTint();
 
         const mats = graphics.CameraMatrices{
             .view = cam.view,
             .proj = camera_mod.remapDepthToBackHalf(cam.proj),
         };
-        self.tile_batch.draw(mats, Mat4.identity);
+        for (self.chunks.items) |*c| {
+            if (c.quads == 0) continue;
+            if (!tilemesh.chunkVisible(cam, c.bounds)) continue;
+            if (c.batch) |*b| {
+                b.draw(mats, Mat4.identity);
+                self.chunks_drawn_last += 1;
+            }
+        }
+        self.ov_batch.draw(mats, Mat4.identity);
         self.sprite_batch.draw(mats, Mat4.identity);
-        self.hl_batch.draw(mats, Mat4.identity); // 最后画：半透明且不写深度
     }
 
-    // ------------------------------------------------------------ 瓦片
-
-    fn rebuildTiles(self: *WorldRenderer, map: *TileMap) void {
-        const atlas = self.atlas.?;
+    fn ensureChunks(self: *WorldRenderer, map: *TileMap, lm: *const LightMap) void {
+        const atlas = self.atlas orelse return;
         const mat = self.materialFor(atlas.texture_handle) orelse return;
-        const b = &self.tile_batch;
-        b.reset();
-        self.tile_quads = 0;
-        b.useMaterial(mat);
+        const need = @as(usize, map.chunks_w) * map.chunks_h;
+        if (self.chunks.items.len != need) {
+            self.dropChunks();
+            self.chunks.resize(self.allocator, need) catch return;
+            for (self.chunks.items) |*c| c.* = .{};
+            map.markAllDirty();
+        }
 
-        const w: i32 = @intCast(map.width);
-        const h: i32 = @intCast(map.height);
-        var gy: i32 = 0;
-        while (gy < h) : (gy += 1) {
-            var gx: i32 = 0;
-            while (gx < w) : (gx += 1) {
-                const tile = map.get(gx, gy).?;
-                const def = map.getDef(tile.kind) orelse continue;
-                const top = map.topY(gx, gy);
-                const fx: f32 = @floatFromInt(gx);
-                const fz: f32 = @floatFromInt(gy);
+        var cy: u32 = 0;
+        while (cy < map.chunks_h) : (cy += 1) {
+            var cx: u32 = 0;
+            while (cx < map.chunks_w) : (cx += 1) {
+                const ci = @as(usize, cy) * map.chunks_w + cx;
+                const chunk = &self.chunks.items[ci];
+                if (!map.chunk_dirty[ci] and chunk.batch != null) continue;
 
-                // 顶面：translate(gx, top, gy+1) * rotateX(-90)，Rect(0,0,1,1)
-                const top_m = Mat4.translate(Vec3.new(fx, top, fz + 1)).mul(Mat4.rotate(-90, Vec3.x_axis));
-                b.setTransformMatrix(top_m);
-                self.tileQuad(Rect.new(Vec2.zero, Vec2.new(1, 1)), atlas.region(def.top), shade(light_top));
+                tilemesh.buildChunk(self.allocator, map, lm.rgb, cx, cy, .{}, &self.chunk_quad_scratch) catch continue;
+                chunk.bounds = tilemesh.chunkBounds(map, cx, cy);
 
-                // 四个侧面：(邻格dx, 邻格dz, 平移, 绕Y旋转角, 亮度)
-                const sides = [_]struct { dx: i32, dy: i32, ox: f32, oz: f32, rot: f32, light: f32 }{
-                    .{ .dx = 1, .dy = 0, .ox = 1, .oz = 1, .rot = 90, .light = light_x },
-                    .{ .dx = -1, .dy = 0, .ox = 0, .oz = 0, .rot = -90, .light = light_x },
-                    .{ .dx = 0, .dy = 1, .ox = 0, .oz = 1, .rot = 0, .light = light_z },
-                    .{ .dx = 0, .dy = -1, .ox = 1, .oz = 0, .rot = 180, .light = light_z },
-                };
-                for (sides) |s| {
-                    const nx = gx + s.dx;
-                    const ny = gy + s.dy;
-                    const nb_top: f32 = if (!map.inBounds(nx, ny)) -map.base_depth else map.topY(nx, ny);
-                    if (nb_top >= top) continue;
-                    const region = atlas.region(def.side);
-                    var y0 = nb_top;
-                    while (y0 < top - 1e-4) {
-                        const seg = @min(map.height_unit, top - y0);
-                        const m = Mat4.translate(Vec3.new(fx + s.ox, y0, fz + s.oz)).mul(Mat4.rotate(s.rot, Vec3.up));
-                        b.setTransformMatrix(m);
-                        self.tileQuad(Rect.new(Vec2.zero, Vec2.new(1, seg)), region, shade(s.light));
-                        y0 += seg;
+                var n_quads: usize = self.chunk_quad_scratch.items.len;
+                if (n_quads > max_quads_per_batch) {
+                    if (!self.warned_tiles) {
+                        self.warned_tiles = true;
+                        debug.warning("iso: chunk quad budget ({d}) exceeded, remaining quads skipped", .{max_quads_per_batch});
                     }
+                    n_quads = max_quads_per_batch;
                 }
+                chunk.quads = @intCast(n_quads);
+
+                if (n_quads > 0) {
+                    const need_v = n_quads * 4;
+                    const need_i = n_quads * 6;
+                    if (chunk.batch == null or chunk.batch.?.vertex_buffer.len < need_v or chunk.batch.?.index_buffer.len < need_i) {
+                        if (chunk.batch) |*old| old.deinit();
+                        chunk.batch = batcher.Batcher.init(.{
+                            .material = mat,
+                            .min_vertices = @max(@as(usize, 256), need_v),
+                            .min_indices = @max(@as(usize, 384), need_i),
+                        }) catch null;
+                    }
+                    if (chunk.batch) |*b| {
+                        b.reset();
+                        for (self.chunk_quad_scratch.items[0..n_quads]) |q| {
+                            const reg = atlas.region(q.atlas);
+                            const v0 = reg.v + (reg.v_2 - reg.v) * q.v_top;
+                            const v1 = reg.v + (reg.v_2 - reg.v) * q.v_bot;
+                            const uvs = [4][2]f32{
+                                .{ reg.u, v1 },
+                                .{ reg.u_2, v1 },
+                                .{ reg.u_2, v0 },
+                                .{ reg.u, v0 },
+                            };
+                            var verts: [4]graphics.PackedVertex = undefined;
+                            for (0..4) |vi| {
+                                verts[vi] = .{
+                                    .x = q.p[vi][0],
+                                    .y = q.p[vi][1],
+                                    .z = q.p[vi][2],
+                                    // 世界染色不在这里乘：绘制时走材质 draw_color
+                                    .color = .{
+                                        @as(f32, @floatFromInt(q.c[vi][0])) / 255.0,
+                                        @as(f32, @floatFromInt(q.c[vi][1])) / 255.0,
+                                        @as(f32, @floatFromInt(q.c[vi][2])) / 255.0,
+                                        1.0,
+                                    },
+                                    .u = uvs[vi][0],
+                                    .v = uvs[vi][1],
+                                };
+                            }
+                            pushQuad3d(b, verts);
+                        }
+                        self.applyBatcher(b);
+                    }
+                } else if (chunk.batch) |*b| {
+                    b.reset();
+                    self.applyBatcher(b);
+                }
+
+                map.chunk_dirty[ci] = false;
+                self.chunks_rebuilt_last += 1;
             }
         }
-        b.apply();
+
+        var total: u32 = 0;
+        for (self.chunks.items) |c| total += c.quads;
+        self.tile_quads = total;
     }
 
-    fn tileQuad(self: *WorldRenderer, rect: Rect, region: TextureRegion, color: Color) void {
-        if (self.tile_quads >= max_quads_per_batch) {
-            if (!self.warned_tiles) {
-                self.warned_tiles = true;
-                debug.warning("iso: tile quad budget ({d}) exceeded, remaining tiles skipped", .{max_quads_per_batch});
+    fn rebuildOverlays(self: *WorldRenderer, map: *const TileMap, ov: *Overlays) void {
+        if (!ov.dirty) return;
+        ov.dirty = false;
+        const b = &self.ov_batch;
+        b.reset();
+        const ov_atlas_mat: ?graphics.Material = if (self.atlas) |a| self.overlayMaterialFor(a.texture_handle) else null;
+
+        var quads: u32 = 0;
+        for (ov.groups) |g| {
+            for (g.items) |cell| {
+                if (quads >= max_quads_per_batch) break;
+                const gx: i32 = cell.x;
+                const gy: i32 = cell.y;
+                if (!map.inBounds(gx, gy)) continue;
+                const y = map.topY(gx, gy) + 0.008;
+                const col = Color.newBytes(cell.rgba[0], cell.rgba[1], cell.rgba[2], cell.rgba[3]);
+                const m = Mat4.translate(Vec3.new(@floatFromInt(gx), y, @floatFromInt(gy + 1))).mul(Mat4.rotate(-90, Vec3.x_axis));
+                b.setTransformMatrix(m);
+                if (cell.atlas != 0xFFFF and self.atlas != null and ov_atlas_mat != null) {
+                    b.useMaterial(ov_atlas_mat.?);
+                    b.addRectangle(Rect.new(Vec2.zero, Vec2.new(1, 1)), self.atlas.?.region(cell.atlas), col);
+                } else {
+                    b.useMaterial(self.hl_material);
+                    b.addRectangle(Rect.new(Vec2.zero, Vec2.new(1, 1)), TextureRegion.default(), col);
+                }
+                quads += 1;
             }
-            return;
         }
-        self.tile_quads += 1;
-        self.tile_batch.addRectangle(rect, region, color);
+        self.applySprites(b);
     }
-
-    fn shade(l: f32) Color {
-        return Color.new(l, l, l, 1.0);
-    }
-
-    // ------------------------------------------------------------ 精灵
 
     fn rebuildSprites(self: *WorldRenderer, world: *World, cam: *const IsoCamera) void {
         const b = &self.sprite_batch;
         b.reset();
         self.sprite_quads = 0;
 
-        const pitch_rad = std.math.degreesToRadians(cam.pitch);
-        const vscale = 1.0 / @cos(pitch_rad);
+        const vscale = cam.billboardVScale();
         const rot = camera_mod.billboardRotation(cam.yaw);
         const sc = Mat4.scale(Vec3.new(1, vscale, 1));
 
         var it = world.iterator();
         while (it.next()) |e| {
+            if (!e.visible) continue;
             if (e.sheet == 0 or e.sheet > self.sheets.items.len) continue;
             if (self.sprite_quads >= max_quads_per_batch) {
                 if (!self.warned_sprites) {
@@ -323,35 +521,16 @@ pub const WorldRenderer = struct {
             const sheet = self.sheets.items[e.sheet - 1];
             const mat = self.materialFor(sheet.texture_handle) orelse continue;
             b.useMaterial(mat);
-            b.setTransformMatrix(Mat4.translate(e.pos).mul(rot).mul(sc));
+            // 脚底锚点吸附到整像素（与相机吸附同一取整规则），避免精灵在屏幕上抖动
+            const foot = if (cam.snap_pixels) cam.snapToPixel(e.pos) else e.pos;
+            b.setTransformMatrix(Mat4.translate(foot).mul(rot).mul(sc));
             const rect = Rect.new(Vec2.new(-e.size.x * 0.5, 0), e.size);
+            const et = e.tint.toArray();
+            const l = if (e.lit) e.light else [3]f32{ 1, 1, 1 };
+            const col = Color.new(et[0] * l[0], et[1] * l[1], et[2] * l[2], et[3]);
             self.sprite_quads += 1;
-            b.addRectangle(rect, sheet.region(e.frame, e.flip_x), e.tint);
+            b.addRectangle(rect, sheet.region(e.frame, e.flip_x), col);
         }
-        b.apply();
-    }
-
-    // ------------------------------------------------------------ 高亮
-
-    fn rebuildHighlight(self: *WorldRenderer, map: *const TileMap) void {
-        const b = &self.hl_batch;
-        b.reset();
-        self.hl_quads = 0;
-        if (self.highlight) |t| {
-            if (map.get(t.x, t.y)) |tile| {
-                if (tile.kind != 0) {
-                    b.useMaterial(self.hl_material);
-                    const fx: f32 = @floatFromInt(t.x);
-                    const fz: f32 = @floatFromInt(t.y);
-                    const m = Mat4.translate(Vec3.new(fx, map.topY(t.x, t.y) + 0.01, fz + 1)).mul(Mat4.rotate(-90, Vec3.x_axis));
-                    b.setTransformMatrix(m);
-                    if (self.hl_quads < max_quads_per_batch) {
-                        self.hl_quads += 1;
-                        b.addRectangle(Rect.new(Vec2.zero, Vec2.new(1, 1)), TextureRegion.default(), self.highlight_color);
-                    }
-                }
-            }
-        }
-        b.apply();
+        self.applySprites(b);
     }
 };

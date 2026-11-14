@@ -2,6 +2,11 @@
 pub const coords = @import("coords.zig");
 pub const camera = @import("camera.zig");
 pub const tilemap = @import("tilemap.zig");
+pub const pathfind = @import("pathfind.zig");
+pub const vision = @import("vision.zig");
+pub const lightmap = @import("lightmap.zig");
+pub const tilemesh = @import("tilemesh.zig");
+pub const overlay = @import("overlay.zig");
 pub const world = @import("world.zig");
 
 // 图形层 / 引擎胶水 / Lua

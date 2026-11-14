@@ -9,15 +9,15 @@ return {
   ["title.stub_notice"] = "Available in a later milestone",
 
   ["ui.back"] = "Back",
-  ["ui.ok"] = "OK",
+  ["ui.ok"] = "OK",  -- i18n:keep
   ["ui.cancel"] = "Cancel",
   ["ui.confirm"] = "Confirm",
   ["ui.reset_default"] = "Reset Defaults",
-  ["ui.reset_all"] = "Reset All",
+  ["ui.reset_all"] = "Reset All",  -- i18n:keep
   ["ui.on"] = "On",
   ["ui.off"] = "Off",
-  ["ui.close"] = "Close",
-  ["ui.none"] = "—",
+  ["ui.close"] = "Close",  -- i18n:keep
+  ["ui.none"] = "—",  -- i18n:keep
 
   ["ui.list.empty"] = "No entries",
   ["ui.demo.title"] = "Widget Preview",
@@ -198,4 +198,24 @@ return {
   ["act.ui_page_next"] = "Page Down",
   ["act.ui_info"] = "Tooltip Info",
   ["act.ui_secondary"] = "Secondary Action",
+
+  ["act.move_dir"] = "Move",
+  ["act.move_dir.up"] = "Move Up",
+  ["act.move_dir.left"] = "Move Left",
+  ["act.move_dir.down"] = "Move Down",
+  ["act.move_dir.right"] = "Move Right",
+  ["act.select"] = "Select",
+  ["act.system_menu"] = "System Menu",
+  ["act.move_to"] = "Move To",
+
+  ["demo.map.street_block"] = "Street Block (64x64)",
+  ["demo.map.suburb_house"] = "Suburb House (cutaway)",
+  ["demo.mode.exterior"] = "Exterior",
+  ["demo.mode.cutaway"] = "Cutaway",
+  ["demo.phase.dawn"] = "Dawn",
+  ["demo.phase.day"] = "Day",
+  ["demo.phase.dusk"] = "Dusk",
+  ["demo.phase.night"] = "Night",
+  ["demo.hud.info"] = "M2 DEMO  |  {map}  |  {mode}  |  {time} {phase}  |  Torch {light}  |  Pos ({x},{y})  |  Quads {quads}  Chunks {chunks}  Rebuilt {rebuilt}",
+  ["demo.hud.help"] = "WASD/Click: Move/Door  |  {interact}: Door  |  {mode}: Cutaway/Exterior  |  {roof}: Roof  |  {map}: Switch Map  |  {time_prev} {time_next}: Time  |  {flash}: Torch  |  {back}: Back",
 }

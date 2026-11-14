@@ -1,0 +1,13 @@
+{
+  "name": "ws_survivor_marcus",
+  "kind": "sprite",
+  "prompt": "winter survivalist scavenge character, blue-grey parka, fur-trimmed hood, rusty orange scarf, heavy backpack, 3/4 isometric view, crisp pixel art",
+  "negative": "anti-aliasing, blurry, photorealistic, bright neon",
+  "seed": 2001,
+  "size": [1024, 1024],
+  "pixel": {
+    "target": [64, 96],
+    "margin": 1,
+    "max_colors": 24
+  }
+}

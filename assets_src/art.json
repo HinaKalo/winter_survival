@@ -2,9 +2,17 @@
   "version": 1,
   "palette": null,
   "art": [
-    {"name": "hero", "dest": "assets/sprites/hero.png", "size": [128, 192], "frame": [32, 48], "source": "placeholder"},
-    {"name": "slime", "dest": "assets/sprites/slime.png", "size": [128, 32], "frame": [32, 32], "source": "placeholder"},
-    {"name": "tiles", "dest": "assets/textures/tiles.png", "size": [256, 128], "frame": [32, 32], "source": "placeholder"},
+    {"name": "tiles", "dest": "assets/textures/tiles.png", "size": [512, 512], "frame": [64, 64], "source": "placeholder"},
+    {"name": "char_placeholder", "dest": "assets/sprites/char_placeholder.png", "size": [512, 768], "frame": [64, 96], "source": "placeholder"},
+    {"name": "char_marcus", "dest": "assets/sprites/char_marcus.png", "size": [512, 768], "frame": [64, 96], "source": "manual"},
+    {"name": "door_leaf", "dest": "assets/sprites/door_leaf.png", "size": [32, 64], "frame": [32, 64], "source": "placeholder"},
+    {"name": "fac_stove", "dest": "assets/sprites/props/fac_stove.png", "size": [192, 64], "frame": [64, 64], "source": "placeholder"},
+    {"name": "furn_table", "dest": "assets/sprites/props/furn_table.png", "size": [128, 64], "frame": [64, 64], "source": "placeholder"},
+    {"name": "furn_bed", "dest": "assets/sprites/props/furn_bed.png", "size": [192, 64], "frame": [64, 64], "source": "placeholder"},
+    {"name": "cont_crate", "dest": "assets/sprites/props/cont_crate.png", "size": [96, 32], "frame": [32, 32], "source": "placeholder"},
+    {"name": "out_tree_dead", "dest": "assets/sprites/props/out_tree_dead.png", "size": [128, 96], "frame": [64, 96], "source": "placeholder"},
+    {"name": "out_car", "dest": "assets/sprites/props/out_car.png", "size": [288, 64], "frame": [96, 64], "source": "placeholder"},
+    {"name": "out_streetlight", "dest": "assets/sprites/props/out_streetlight.png", "size": [64, 96], "frame": [32, 96], "source": "placeholder"},
     {"name": "skin", "dest": "assets/ui/skin.png", "size": [128, 128], "frame": [16, 16], "source": "manual"}
   ]
 }

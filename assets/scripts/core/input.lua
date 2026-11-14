@@ -8,7 +8,9 @@ local PB = pad_buttons or {}
 local PA = pad_axes or {}
 
 local M = {
-  bindings = {}, -- [device][action_id] = { primary, secondary }
+  -- [device][action_id] = { [1] = primary, [2] = secondary }; actions with `named_slots` for a device (move_dir on
+  -- keyboard) instead use { up =, left =, down =, right = }.
+  bindings = {},
   _repeat_dir = nil,
   _repeat_timer = 0,
   _repeat_fired = false,
@@ -24,6 +26,7 @@ local CTX_CONFLICTS = {
   U = { U = true, D = true, M = true, G = true },
   D = { U = true, D = true, M = true, G = true },
   M = { U = true, D = true, M = true, G = true },
+  X = {}, -- dev-only actions (dev.*): never conflict with anything
 }
 
 local function kb(key, shift, ctrl)
@@ -76,7 +79,9 @@ M.ACTIONS = {
     defaults = { keyboard = { kb(K.F) }, mouse = { mb(1) }, pad = { pb(PB.a) } } },
   { id = "context", ctx = "W", rebindable = true, screen = { mouse = true },
     defaults = { keyboard = { kb(K.ENTER) }, mouse = { mb(1) }, pad = { pb(PB.x) } } },
-  { id = "cursor_free", ctx = "W", rebindable = true, screen = { mouse = true },
+  -- cursor_free / open_wheel: planned for a later milestone, not in the M2 demo (no code reads them yet).
+  -- `na` = device column is "–" in UI-UX §7.1 (no input exists there, so nothing to validate).
+  { id = "cursor_free", ctx = "W", rebindable = true, na = { mouse = true },
     defaults = { keyboard = { kb(K.V) }, mouse = {}, pad = { pb(PB.lt) } } },
   { id = "sneak_toggle", ctx = "R", rebindable = true, screen = { mouse = true },
     defaults = { keyboard = { kb(K.C) }, mouse = {}, pad = { pb(PB.l3) } } },
@@ -102,7 +107,7 @@ M.ACTIONS = {
     defaults = { keyboard = { kb(K.M) }, mouse = {}, pad = {} } },
   { id = "open_journal", ctx = "W", rebindable = true, screen = { mouse = true, pad = true },
     defaults = { keyboard = { kb(K.J) }, mouse = {}, pad = {} } },
-  { id = "open_wheel", ctx = "W", rebindable = true, screen = { keyboard = true, mouse = true },
+  { id = "open_wheel", ctx = "W", rebindable = true, na = { keyboard = true, mouse = true },
     defaults = { keyboard = {}, mouse = {}, pad = { pb(PB.back) } } },
   { id = "end_day", ctx = "H", rebindable = true, screen = { mouse = true },
     defaults = { keyboard = { kb(K.E) }, mouse = {}, pad = { pb(PB.back) } } },
@@ -114,11 +119,95 @@ M.ACTIONS = {
     defaults = { keyboard = { kb(K.HOME) }, mouse = {}, pad = {} } },
   { id = "show_overlay_info", ctx = "R", rebindable = true, screen = { mouse = true, pad = true },
     defaults = { keyboard = { kb(K.N) }, mouse = {}, pad = {} } },
+  -- UI-UX §7.1 `move_dir` (PLAN §5.4): ONE action whose value is a 2D direction (M.move_vec).
+  -- Keyboard = 4 named slots up/left/down/right (default W/A/S/D) in M.bindings, rebindable like any slot
+  -- (conflict detection, reserved keys, save/load). Pad = whole left stick (slot "ls" = `{ axis = "ls" }`).
+  -- Mouse entry: right-click ground (`move_to`); the single-button drag mode of §7.1 is not implemented yet.
+  { id = "move_dir", ctx = "W", rebindable = true,
+    named_slots = { keyboard = { "up", "left", "down", "right" }, mouse = {}, pad = { "ls" } },
+    screen = { mouse = "move_to" },
+    defaults = { keyboard = { up = kb(K.W), left = kb(K.A), down = kb(K.S), right = kb(K.D) },
+                 mouse = {}, pad = { ls = { axis = "ls" } } } },
+  -- `screen` values: a string naming another action (must have a binding on that device, see validate()) or a
+  -- HUD widget name; true = HUD widget.
+  -- select / move_to keyboard+pad: free-cursor mode (`cursor_free`: V / LT, spec §7.1) drives them.
+  { id = "select", ctx = "W", rebindable = false, screen = { keyboard = "cursor_free" },
+    defaults = { keyboard = {}, mouse = { mb(0) }, pad = { pb(PB.a) } } },
+  { id = "move_to", ctx = "W", rebindable = true, screen = { keyboard = "cursor_free", pad = "cursor_free" },
+    defaults = { keyboard = {}, mouse = { mb(1) }, pad = {} } },
+  -- Esc; mouse: demo "Back" HUD button; pad: system wheel entry (`open_wheel`, Back) per §7.1.
+  { id = "system_menu", ctx = "G", rebindable = false, screen = { mouse = "hud_button", pad = "open_wheel" },
+    defaults = { keyboard = { kb(K.ESCAPE) }, mouse = {}, pad = {} } },
+
+  -- Dev-only demo actions (scenes/m2_demo.lua); not rebindable, never listed in the rebind UI.
+  { id = "dev.time_prev", ctx = "X", rebindable = false, screen = { keyboard = true, mouse = true, pad = true },
+    defaults = { keyboard = { kb(K.COMMA) }, mouse = {}, pad = {} } },
+  { id = "dev.time_next", ctx = "X", rebindable = false, screen = { keyboard = true, mouse = true, pad = true },
+    defaults = { keyboard = { kb(K.PERIOD) }, mouse = {}, pad = {} } },
+  { id = "dev.map_toggle", ctx = "X", rebindable = false, screen = { keyboard = true, mouse = true, pad = true },
+    defaults = { keyboard = { kb(K.TAB) }, mouse = {}, pad = {} } },
+  { id = "dev.mode_toggle", ctx = "X", rebindable = false, screen = { keyboard = true, mouse = true, pad = true },
+    defaults = { keyboard = { kb(K.C) }, mouse = {}, pad = {} } },
+  { id = "dev.roof_toggle", ctx = "X", rebindable = false, screen = { keyboard = true, mouse = true, pad = true },
+    defaults = { keyboard = { kb(K.R) }, mouse = {}, pad = {} } },
+  { id = "dev.flashlight", ctx = "X", rebindable = false, screen = { keyboard = true, mouse = true, pad = true },
+    defaults = { keyboard = { kb(K.L) }, mouse = {}, pad = {} } },
 }
 
 local ACTION_BY_ID = {}
 for _, a in ipairs(M.ACTIONS) do
   ACTION_BY_ID[a.id] = a
+end
+
+local DEFAULT_SLOTS = { 1, 2 }
+
+--- Slot ids an action uses on a device: { 1, 2 } (primary/secondary) or its named slots (move_dir keyboard).
+local function slot_ids(act, dev)
+  return act.named_slots and act.named_slots[dev] or DEFAULT_SLOTS
+end
+
+local function slot_valid(act, dev, slot)
+  for _, k in ipairs(slot_ids(act, dev)) do
+    if k == slot then return true end
+  end
+  return false
+end
+
+--- Fresh slot table for (act, dev) copied from src (defaults or loaded data); only the action's own slot ids.
+local function copy_slots(act, dev, src)
+  local out = {}
+  for _, k in ipairs(slot_ids(act, dev)) do
+    if type(src) == "table" and type(src[k]) == "table" then out[k] = util.shallow_copy(src[k]) end
+  end
+  return out
+end
+
+local function has_any(act, dev)
+  local slots = M.bindings[dev] and M.bindings[dev][act.id]
+  if not slots then return false end
+  for _, k in ipairs(slot_ids(act, dev)) do
+    if slots[k] ~= nil then return true end
+  end
+  return false
+end
+
+--- A stick-axis binding may only sit in the "ls" slot and that slot only takes axis bindings (or nil).
+local function binding_fits(slot, b)
+  if b == nil then return true end
+  return (b.axis ~= nil) == (slot == "ls")
+end
+
+--- Slot ids of an action on a device (public for UI / tests).
+function M.slot_ids(action_id, device)
+  local a = ACTION_BY_ID[action_id]
+  return a and slot_ids(a, device) or DEFAULT_SLOTS
+end
+
+--- i18n key for an action row; named slots get "act.<id>.<slot>" (e.g. act.move_dir.up).
+function M.label_key(action_id, slot)
+  local a = ACTION_BY_ID[action_id]
+  if a and a.named_slots and type(slot) == "string" then return "act." .. action_id .. "." .. slot end
+  return "act." .. action_id
 end
 
 -- Reverse lookup for key / pad button names
@@ -155,11 +244,7 @@ function M.reset_all()
   M.bindings = { keyboard = {}, mouse = {}, pad = {} }
   for _, a in ipairs(M.ACTIONS) do
     for _, dev in ipairs({ "keyboard", "mouse", "pad" }) do
-      local src = a.defaults[dev] or {}
-      M.bindings[dev][a.id] = {
-        src[1] and util.shallow_copy(src[1]) or nil,
-        src[2] and util.shallow_copy(src[2]) or nil,
-      }
+      M.bindings[dev][a.id] = copy_slots(a, dev, a.defaults[dev])
     end
   end
 end
@@ -168,11 +253,7 @@ function M.reset_action(action_id)
   local a = ACTION_BY_ID[action_id]
   if not a then return false end
   for _, dev in ipairs({ "keyboard", "mouse", "pad" }) do
-    local src = a.defaults[dev] or {}
-    M.bindings[dev][a.id] = {
-      src[1] and util.shallow_copy(src[1]) or nil,
-      src[2] and util.shallow_copy(src[2]) or nil,
-    }
+    M.bindings[dev][a.id] = copy_slots(a, dev, a.defaults[dev])
   end
   return true
 end
@@ -206,6 +287,7 @@ local function same_binding(device, a, b)
   elseif device == "mouse" then
     return a.btn == b.btn
   elseif device == "pad" then
+    if a.axis or b.axis then return a.axis == b.axis end
     return a.btn == b.btn and (a.lt or false) == (b.lt or false)
   end
   return false
@@ -220,7 +302,7 @@ function M.find_conflict(device, action_id, b)
     if other.id ~= action_id and cmap[other.ctx] then
       local slots = dev_tbl[other.id]
       if slots then
-        for slot = 1, 2 do
+        for _, slot in ipairs(slot_ids(other, device)) do
           if same_binding(device, slots[slot], b) then
             return { action_id = other.id, slot = slot, rebindable = other.rebindable }
           end
@@ -231,14 +313,25 @@ function M.find_conflict(device, action_id, b)
   return nil
 end
 
+--- Input coverage check (UI-UX §7.2 "no blank" rule). Per action and device one of:
+---  * a binding in some slot,
+---  * `na[dev]` (spec column is "–": no input exists on that device),
+---  * `screen[dev]` = true / a HUD widget name,
+---  * `screen[dev]` = the id of another action, which must itself have a binding on that device.
+--- Returns true, or false, action_id, device.
 function M.validate()
   for _, a in ipairs(M.ACTIONS) do
     for _, dev in ipairs({ "keyboard", "mouse", "pad" }) do
-      local slots = M.bindings[dev][a.id]
-      local has_bind = slots and (slots[1] ~= nil or slots[2] ~= nil)
-      local has_screen = a.screen and a.screen[dev]
-      if not has_bind and not has_screen then
-        return false, a.id, dev
+      if not has_any(a, dev) and not (a.na and a.na[dev]) then
+        local sc = a.screen and a.screen[dev]
+        local ok = false
+        if sc == true then
+          ok = true
+        elseif type(sc) == "string" then
+          local target = ACTION_BY_ID[sc]
+          ok = target == nil or has_any(target, dev) -- not an action id = HUD widget name
+        end
+        if not ok then return false, a.id, dev end
       end
     end
   end
@@ -248,6 +341,8 @@ end
 function M.set_binding(device, action_id, slot, b)
   local a = ACTION_BY_ID[action_id]
   if not a or not a.rebindable then return false, "non_rebindable" end
+  if not slot_valid(a, device, slot) then return false, "bad_slot" end
+  if not binding_fits(slot, b) then return false, "bad_slot" end
   if M.is_reserved_binding(device, b) then return false, "reserved" end
   local prev = M.bindings[device][action_id][slot]
   M.bindings[device][action_id][slot] = b and util.shallow_copy(b) or nil
@@ -264,8 +359,10 @@ function M.swap_bindings(device, act1, slot1, act2, slot2)
   if not a1 or not a2 or not a1.rebindable or not a2.rebindable then
     return false, "non_rebindable"
   end
+  if not slot_valid(a1, device, slot1) or not slot_valid(a2, device, slot2) then return false, "bad_slot" end
   local b1 = M.bindings[device][act1][slot1]
   local b2 = M.bindings[device][act2][slot2]
+  if not binding_fits(slot2, b1) or not binding_fits(slot1, b2) then return false, "bad_slot" end
   M.bindings[device][act1][slot1] = b2
   M.bindings[device][act2][slot2] = b1
   local ok, bad_act, bad_dev = M.validate()
@@ -278,10 +375,13 @@ function M.swap_bindings(device, act1, slot1, act2, slot2)
 end
 
 function M.replace_binding(device, act_new, slot_new, b, act_old, slot_old)
+  if M.is_reserved_binding(device, b) then return false, "reserved" end
   local an, ao = ACTION_BY_ID[act_new], ACTION_BY_ID[act_old]
   if not an or not ao or not an.rebindable or not ao.rebindable then
     return false, "non_rebindable"
   end
+  if not slot_valid(an, device, slot_new) or not slot_valid(ao, device, slot_old) then return false, "bad_slot" end
+  if not binding_fits(slot_new, b) then return false, "bad_slot" end
   local prev_new = M.bindings[device][act_new][slot_new]
   local prev_old = M.bindings[device][act_old][slot_old]
   M.bindings[device][act_new][slot_new] = util.shallow_copy(b)
@@ -309,6 +409,7 @@ function M.format_binding(device, b)
     elseif b.btn == 2 then return "M3"
     else return "M" .. tostring(b.btn) end
   elseif device == "pad" then
+    if b.axis then return string.upper(b.axis) end
     local name = PAD_NAMES[b.btn] or ("P" .. tostring(b.btn))
     return (b.lt and "LT+" or "") .. name
   end
@@ -327,10 +428,7 @@ function M.import_bindings(tbl)
       for act_id, slots in pairs(tbl[dev]) do
         local a = ACTION_BY_ID[act_id]
         if a and a.rebindable and type(slots) == "table" then
-          M.bindings[dev][act_id] = {
-            slots[1] and util.shallow_copy(slots[1]) or nil,
-            slots[2] and util.shallow_copy(slots[2]) or nil,
-          }
+          M.bindings[dev][act_id] = copy_slots(a, dev, slots)
         end
       end
     end
@@ -362,49 +460,84 @@ local function match_kb(b, fn)
 end
 
 local function match_pad(b, fn)
-  if not b or not pad then return false end
+  if not b or not b.btn or not pad then return false end
   if b.lt and not pad.button_down(PB.lt) then return false end
   return fn(b.btn)
 end
 
 function M.down(action_id)
+  local act = ACTION_BY_ID[action_id]
+  if not act then return false end
   local kb_slots = M.bindings.keyboard[action_id]
   if kb_slots and iso then
-    for i = 1, 2 do
+    for _, i in ipairs(slot_ids(act, "keyboard")) do
       if match_kb(kb_slots[i], iso.key_down) then return true end
     end
   end
   local mb_slots = M.bindings.mouse[action_id]
   if mb_slots and iso then
-    for i = 1, 2 do
+    for _, i in ipairs(slot_ids(act, "mouse")) do
       if mb_slots[i] and iso.mouse_down(mb_slots[i].btn) then return true end
     end
   end
   local pd_slots = M.bindings.pad[action_id]
   if pd_slots and pad then
-    for i = 1, 2 do
+    for _, i in ipairs(slot_ids(act, "pad")) do
       if match_pad(pd_slots[i], pad.button_down) then return true end
     end
   end
   return false
 end
 
-function M.pressed(action_id)
+local STICK_DEADZONE = 0.25
+
+--- Value of the `move_dir` action: unit-clamped 2D direction (x = screen right, y = screen down) from the four
+--- bound keyboard slots (M.bindings.keyboard.move_dir) and the pad left stick (deadzone 0.25). 0, 0 when idle.
+function M.move_vec()
+  local dx, dy = 0, 0
+  local slots = M.bindings.keyboard.move_dir
+  if iso and slots then
+    local function held(b)
+      if not b or not b.key then return false end
+      if b.shift and not shift_down() then return false end
+      if b.ctrl and not ctrl_down() then return false end
+      return iso.key_down(b.key) == true
+    end
+    if held(slots.up) then dy = dy - 1 end
+    if held(slots.down) then dy = dy + 1 end
+    if held(slots.left) then dx = dx - 1 end
+    if held(slots.right) then dx = dx + 1 end
+  end
+  local ls = M.bindings.pad.move_dir
+  if dx == 0 and dy == 0 and pad and ls and ls.ls then
+    local lx = pad.axis(PA.lx or 0)
+    local ly = pad.axis(PA.ly or 1)
+    if lx * lx + ly * ly >= STICK_DEADZONE * STICK_DEADZONE then dx, dy = lx, ly end
+  end
+  local len = math.sqrt(dx * dx + dy * dy)
+  if len > 1 then dx, dy = dx / len, dy / len end
+  return dx, dy
+end
+
+--- `device` (optional): restrict to "keyboard" | "mouse" | "pad".
+function M.pressed(action_id, device)
+  local act = ACTION_BY_ID[action_id]
+  if not act then return false end
   local kb_slots = M.bindings.keyboard[action_id]
-  if kb_slots and iso then
-    for i = 1, 2 do
+  if kb_slots and iso and (not device or device == "keyboard") then
+    for _, i in ipairs(slot_ids(act, "keyboard")) do
       if match_kb(kb_slots[i], iso.key_pressed) then return true end
     end
   end
   local mb_slots = M.bindings.mouse[action_id]
-  if mb_slots and iso then
-    for i = 1, 2 do
+  if mb_slots and iso and (not device or device == "mouse") then
+    for _, i in ipairs(slot_ids(act, "mouse")) do
       if mb_slots[i] and iso.mouse_pressed(mb_slots[i].btn) then return true end
     end
   end
   local pd_slots = M.bindings.pad[action_id]
-  if pd_slots and pad then
-    for i = 1, 2 do
+  if pd_slots and pad and (not device or device == "pad") then
+    for _, i in ipairs(slot_ids(act, "pad")) do
       if match_pad(pd_slots[i], pad.button_pressed) then return true end
     end
   end
@@ -412,22 +545,24 @@ function M.pressed(action_id)
 end
 
 function M.released(action_id)
+  local act = ACTION_BY_ID[action_id]
+  if not act then return false end
   local kb_slots = M.bindings.keyboard[action_id]
   if kb_slots and kit_input then
-    for i = 1, 2 do
-      if kb_slots[i] and kit_input.key_released(kb_slots[i].key) then return true end
+    for _, i in ipairs(slot_ids(act, "keyboard")) do
+      if kb_slots[i] and kb_slots[i].key and kit_input.key_released(kb_slots[i].key) then return true end
     end
   end
   local mb_slots = M.bindings.mouse[action_id]
   if mb_slots and kit_input then
-    for i = 1, 2 do
+    for _, i in ipairs(slot_ids(act, "mouse")) do
       if mb_slots[i] and kit_input.mouse_released(mb_slots[i].btn) then return true end
     end
   end
   local pd_slots = M.bindings.pad[action_id]
   if pd_slots and pad then
-    for i = 1, 2 do
-      if pd_slots[i] and pad.button_released(pd_slots[i].btn) then return true end
+    for _, i in ipairs(slot_ids(act, "pad")) do
+      if pd_slots[i] and pd_slots[i].btn and pad.button_released(pd_slots[i].btn) then return true end
     end
   end
   return false

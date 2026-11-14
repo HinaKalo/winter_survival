@@ -68,7 +68,7 @@ return {
 | # | 任务 | 代理 | 依赖 | 文件 | 验收 |
 |---|---|---|---|---|---|
 | S1 | 测试隔离存档目录：`luatest`、`probe`、`balance` 步骤在 `build.zig` 里固定传 `--save-dir .zig-cache/test-saves/<步骤名>`，启动前清空该目录（M1 发现跑测试会改写真实的 `saves/settings.sav`） | haiku | — | `build.zig` | 跑完全部测试后 `saves/` 下文件的 sha256 不变 |
-| S0 | 本地截图脚本 `tools/shot.sh <out.png> [--lang zh\|en\|ko] [--script x.lua] [--at 3]`：先 `zig build`（窗口版），xvfb-run 1280×720 调 `ci/smoke.py`，改语言前备份 `saves/settings.sav`、退出时 trap 恢复 | haiku | — | `tools/shot.sh` | 连跑三语不改动 `settings.sav`；中途 Ctrl-C 也能恢复 |
+| S0 | 本地截图脚本 `tools/shot.sh <out.png> [--lang zh\|en\|ko] [--scene NAME] [--script x.lua] [--at 3]`：先 `zig build`（窗口版），xvfb-run 1280×720 调 `ci/smoke.py`，改语言前备份 `saves/settings.sav`、退出时 trap 恢复 | haiku | — | `tools/shot.sh` | 连跑三语不改动 `settings.sav`；中途 Ctrl-C 也能恢复 |
 | X2 | 相机像素模式 + 吸附 | sonnet | — | `camera.zig` | ENGINE-PLAN A5 camera |
 | X3 | tilemap flags/tag/块脏 + `pathfind.zig` | sonnet | — | `tilemap.zig`、`pathfind.zig` | A5 tilemap、pathfind |
 | X13 | 音频环境层 | haiku | — | `audio.zig`、`lua_audio.zig`、`assets.py` | ENGINE-PLAN X13 |
@@ -83,7 +83,7 @@ return {
 | X8 | `render.zig` 分块/覆盖层/精灵 + `engine.zig` 胶水 | sonnet | X2, X6, X7 | | ENGINE-PLAN X8；A7.1 第 1–3 条的自检与计数器 |
 | X9 | `lua_api.zig` 全部 `iso` 新绑定 + README API 表 | haiku | X8 | | ENGINE-PLAN X9 |
 | L4 | `mapbuild.apply()`、`view/actors.lua`（生成/动作/朝向/受光，动作帧表来自 ART-AUDIO §5.4）、`view/lightfov.lua`（§3.1 环境光插值、§3.3 光源表、10 Hz FOV 与迷雾、组 3 视锥覆盖层） | sonnet | X9, L2, L3, P1 | `view/*.lua` | §0 的 G3–G5 |
-| D1 | 开发演示 `scenes/m2_demo.lua`（`--script` 或开发菜单进入）：街区图 / 剖面房屋切换、昼夜时间滑块、一个带视锥的巡逻 NPC、可控角色点击寻路 | sonnet | L4 | | 三种输入可操作；截图 |
+| D1 | 开发演示 `scenes/m2_demo.lua`（`WS_SCENE=m2_demo` 或开发菜单进入）：街区图 / 剖面房屋切换、昼夜时间滑块、一个带视锥的巡逻 NPC、可控角色点击寻路 | sonnet | L4 | | 三种输入可操作；截图 |
 | X18 | 探针 `engine_ext.lua`（ENGINE-PLAN X18：每个新 `iso` 函数的 NaN/Inf/越界模糊测试）+ `m2_map.lua`（G2、G4 的断言） | haiku | X9, L4 | `tests/probe/` | 两个探针全过 |
 
 并行波次：①S0、S1、X2、X3、X13、P1 → ②X4、X7、L2；合入 M3 的 layout 提交后做 L1、L3 → ③X5 → ④X6 → ⑤X8 → ⑥X9 → ⑦L4 → ⑧D1、X18 → 主代理验收。
@@ -116,7 +116,7 @@ A1–A4 不阻塞引擎链，排在波次 ①–⑥ 里并行；A5 在 M2 验收
 ## 3. 截图验收方法
 
 ```bash
-tools/shot.sh /path/out.png --script assets/scripts/scenes/m2_demo.lua --lang zh
+tools/shot.sh /path/out.png --scene m2_demo --lang zh
 ```
 
 Xvfb + Mesa 软件渲染，在本机就能截图，不碰用户桌面。像素量测用 PIL 读 PNG 数顶点。Windows GPU 运行器上的 `ci/smoke.py` 仍然是最终依据。
@@ -132,3 +132,66 @@ Xvfb + Mesa 软件渲染，在本机就能截图，不碰用户桌面。像素�
 | 软件渲染下 64×64 图帧率低 | 只验正确性；性能数字以 Windows 运行器为准 |
 | 轴向与屏幕方向映射容易弄反 | L2 的测试用例由推导得出，D1 截图再确认一次（M1 的 UV 翻转就是这类问题） |
 | 链路长（X3→X4→X5→X6→X8→X9→L4） | Lua 侧 L1–L3 与引擎链并行推进；X4/X5 可以交给同一个 sonnet 上下文顺序完成，减少交接 |
+
+## 5. 返工 1（2026-11-14，提交 269c624 两路审查均 FAIL）
+
+按 CLAUDE.md 的返工上限：这是第 1 次返工；再 FAIL 时主代理先做根因分析，再返工最后一次。**审查通过后才合入 main。**
+
+### 5.1 裁定（补充 §2.1 表格，子代理照做）
+
+- `TileDef` 新增 `side_base: u16 = 0xFFFF`：墙最下面一段（level 0–1）侧面用的图集格，未设置时同 `side`。字段已由主代理加在 `tilemap.zig`；侧面分段规则：level 0–1 用 `side_base`，最上一段（2 级）用 `side_cap`，其余用 `side`。墙高 ≤ 2 级时只画一段，优先级 `side_base` > `side_cap` > `side`。
+- **exterior 模式**（只供外观，不可进入）：
+  - 外墙 6 级：`side_base = side = 外墙材质`，`side_cap = 60`。
+  - 窗列 6 级：`side_base = 外墙材质`，`side = 43`（窗），`side_cap = 61`（窗楣），`blocked + opaque`。61 的美术须在上沿画出与 60 一致的檐线，保证檐线连续。
+  - 门列 6 级：`side_base = 40/41/42`（按门种类），`side = 外墙材质`，`side_cap = 61`，`blocked + opaque`，不生成门实体。
+  - 内墙、内门、道具：不生成（高度 0 的室内地面），全部被屋顶盖住；屋顶 = 外墙围住的所有格，顶面 56/57。
+- **cutaway 模式**：墙 2 级；窗 = 2 级窗格（`side = 43`，`blocked`，不 `opaque`）；门 = 0 高度格 + 门实体，关门 = `blocked + opaque`，开门清除两者（PLAN §4.2）。
+- 道具格：`blocked`；`opaque` 由道具表决定（床、台面不挡视线，书架、冰箱挡）。
+- 演示场景不得调用任何旋转接口（D6）。
+
+### 5.2 返工清单与分工
+
+文件所有权互不重叠；共享文件（`src/iso/tests.zig`、`README.md`）只追加自己的行。每个任务完成后先跑 `zig build test`，涉及画面的还要用 Xvfb 截图自查后再交审。
+
+| # | 代理 | 文件 | 内容 |
+|---|---|---|---|
+| R1 | sonnet | `tilemap.zig`、`overlay.zig`、`render.zig`、`engine.zig`、`camera.zig`、`world.zig`、`lua_api.zig` | ① `set`/`fill` 按 TileDef 重置该格 flags/tag；② `world_set_tint` 改为绘制时生效（uniform 或每帧乘色，不烘进分块顶点），改色不重建分块；③ ENGINE-PLAN A7.1 的启动自检（`addRectangle` 后 vertex_pos +4、index_pos +6，否则 `debug.fatal`）与每帧 `apply()` 计数断言，缓冲只经 Batcher 写；④ D6：删除 `rotateStep`、`camera_rotate`、`camera_set_angles` 的 yaw 参数（yaw 固定 45°）及相关测试；⑤ 实体脚底像素吸附（与相机吸附同一取整规则）；⑥ `overlay_add_tex` 校验图集格号（0..63，越界忽略并计数）；⑦ 非阻塞一并修：高亮格走覆盖层组 15、光源更新移到 Lua update 之后、地图尺寸上限 128；⑧ Lua 绑定 `side_base`（`world_define_tile` 的表字段）；⑨ 测试：相机视口/吸附奇偶、tilemap set 重置、overlay 上限与 addTex、world clear |
+| R2 | sonnet | `pathfind.zig` | 二叉堆开集、代数戳（generation）替代每次 memset、h 相等时的稳定 tie-break；测试：200 张随机图与 BFS 最短长度一致、蛇形迷宫、两次查询 scratch 互不影响 |
+| R3 | sonnet | `tilemesh.zig` | 侧面从 level 0 开始画（不是从邻格顶面开始），按 §5.1 分段取 `side_base`/`side`/`side_cap`；侧面每个顶点取各自角点的光照（不是整面一个颜色）；邻格为空时不取邻格 rgb；测试：角点光照矩阵、`chunkVisible`、分段格号 |
+| R4 | haiku | `vision.zig`、`lightmap.zig`（只加测试，测出 bug 就在同文件修） | vision：端点是墙、`fov` 与 `canSee` 一致、NaN 输入、1000 对随机点对称性；lightmap：无光源、移动光源、不透明格翻转后更新、第 65 个光源被拒 |
+| R5a | sonnet | `view/mapbuild.lua`、`data/tiles.lua`、`data/locations/suburb_house.lua`、`tests/lua/test_mapbuild.lua`、`tests/lua/test_data_locations.lua` | 按 §5.1 重做两种模式；`plan()` 每格输出 `flags`、`tag`；道具 blocked/opaque；门覆盖表的 x/y 键统一（mapbuild.lua:98 与 :170）；`layout.parse` 返回 nil 时报错；墙顶格号按 ART-AUDIO §4.2（不用 52）；suburb_house A 逐字照抄 WORLD 的 A 布局 |
+| R5b | sonnet | `scenes/m2_demo.lua`、`view/lightfov.lua`、`view/actors.lua`、`ui/title.lua`、`assets/i18n/*.lua`、`core/input.lua` 的动作表 | 删除 Q/Z 旋转；演示从开发菜单/`WS_SCENE=m2_demo` 进入，**标题“新游戏”恢复原行为**；HUD 文本走 i18n 三语；输入改用 `core/input` 动作（缺的动作按 UI-UX §7 补，`--dev` 才有的演示键用 `dev.*` 动作）；NPC 视锥用覆盖层组 3；lightfov 实现 ART-AUDIO §3.1 按小时插值与 §3.3 光源表、FOV/迷雾 10 Hz 节流；D1 时间滑块（键盘 `,` `.` 调时刻）、街区/剖面房屋（suburb_house）切换 |
+| R5c | haiku（R1、R5b 之后） | `tests/probe/engine_ext.lua`、`tests/probe/m2_map.lua`、`tests/lua/test_facing.lua`、`tools/gen_assets.py`、`assets_src/art.json` | engine_ext 对每个新 `iso` 函数做 NaN/Inf/越界模糊；m2_map 加日志 quad 警告 grep；test_facing 覆盖 8 个移动方向与完整帧表；gen_assets 删除 32 px tiles/hero/slime 及其 art.json 条目和旧文件 |
+
+不在本次返工内：`core/layout.lua:207` 的 `pairs()` 遍历顺序不确定（M3 所有，已转告 M3 会话修复后由 M3 合入）；33×33 光照缓存、覆盖层 y 偏移（记为 M4 前的技术债）。
+
+### 5.3 波次
+
+① R1、R2、R3、R4、R5a、R5b 并行 → ② R5c → ③ code-reviewer 按 §5.1/§5.2 与原 A5 清单复审，审查代理要看 Xvfb 截图（day/night × exterior/cutaway）→ ④ 主代理验收，通过后合入 main。
+
+### 5.4 R5b 第 2 次审查 FAIL 的根因与裁定（最后一次返工）
+
+根因（计划缺陷，不是代理能力问题）：
+1. 光源链路被拆给两个所有者：地图光源在 `mapbuild`（R5a）里直接 `iso.light_add`，光源表与着色在 `lightfov`（R5b），两边都没有接线，窗光与 §3.3 光源表成了死代码。
+2. UI-UX §7.1 没写 `move_dir` 能否改键，代理自行定为不可改，导致 WASD 对冲突检测不可见。
+
+裁定：
+- **`move_dir` 可改键**（照 UI-UX §7.3 的“摇杆整轴可绑 move_dir”）：键盘为 4 个方向槽 `up/left/down/right`，默认 W/A/S/D，存在 `bindings` 里，冲突检测、保留键检查、改键界面与存档都按普通槽处理；手柄为 LS 整轴。删除 `fixed` 字段。
+- **光源统一走 `lightfov`**：`mapbuild.apply(plan, opts)` 接受 `opts.add_light(name, x, z)`，地图里的所有光源都经它创建；地点数据的光源只写 `name`（取 `data/lights.lua` 的条目）和位置，不再硬编码颜色/半径。剖面模式下每个窗格按 ART-AUDIO §3.1 放一个 `window` 光（半径 3，室外环境光 × 0.6），随时间滑块重新着色。
+- 尚未实现的入口（`cursor_free`、`open_wheel` 轮盘）在 `input.lua` 注释里标明“后续里程碑”；`screen` 只标真实存在的入口，`validate()` 检查字符串型 `screen` 指向的动作在该设备上确有绑定。
+- 本次返工由 coder-sonnet 执行，文件所有权临时扩大到 `mapbuild.lua` 的光源部分与 `data/locations/*.lua` 的光源字段。再不过即停止返工，由主代理亲自修复或交用户决策。
+
+## 6. M2-fix（合并后 Codex 审查，2026-11-14）
+
+Codex（gpt-6.1-sol，medium）审查合并到 main 的 M2，结论 FAIL：1 个 P1、5 个 P2。按新流程，主代理先写验收测试并确认为红，编码代理只负责让测试变绿。
+
+| # | 问题 | 裁定 | 验收测试 |
+|---|---|---|---|
+| F1 | 方向移动（`actors.move_dir`）不检查碰撞，会穿墙、穿过关着的门 | 每一步移动前检查目标格可走；被挡时沿另一轴滑动，两轴都被挡则停住。不得冻结正常移动 | `tests/probe/m2_fix.lua` F1 |
+| F2 | `gen_pilot.py` 覆盖了整张图集，41/53/56 号格子变成全透明 | 生成器以完整占位图集为底，只替换试点格子；重新生成并提交 `assets/textures/tiles.png` | `tests/tools/test_m2_fix.py` AtlasCellsTest |
+| F3 | 演示场景在设置像素比例（PPU）之前生成地图和角色，首次进入时尺寸错误 | 相机配置移到 `mapbuild.apply` 与生成角色之前 | `m2_fix.lua` F3 |
+| F4 | `entity_set_size_px` 多乘了一次 cos(pitch) | 改为保存 `wpx/ppu × hpx/ppu`；新增只读绑定 `iso.entity_get_size(id) -> {w, h}` | `m2_fix.lua` F4 |
+| F5 | 拾取用的高度和 V 坐标没有做渲染时的 1/cos(pitch) 拉伸 | 拾取的命中框与 UV 和渲染共用同一个竖直变换 | `m2_fix.lua` F5 |
+| F6 | 文档里用 `--script` 直接启动 `scenes/m2_demo.lua` 后什么也不显示 | 文档与 `tools/shot.sh` 改用 `WS_SCENE=m2_demo`（shot.sh 增加 `--scene NAME`）；凡文档中出现的 `--script` 入口都必须定义全局 `_init`/`_update` | `test_m2_fix.py` ScriptEntryTest |
+
+完成标准：`m2_fix.lua` 全部检查通过；`python3 -m unittest discover -s tests/tools` 全绿；luatest、`zig build test` 与现有全部探针仍然全绿。

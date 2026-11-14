@@ -9,15 +9,15 @@ return {
   ["title.stub_notice"] = "이후 마일스톤에서 구현됩니다",
 
   ["ui.back"] = "뒤로",
-  ["ui.ok"] = "확인",
+  ["ui.ok"] = "확인",  -- i18n:keep
   ["ui.cancel"] = "취소",
   ["ui.confirm"] = "확정",
   ["ui.reset_default"] = "기본값 복원",
-  ["ui.reset_all"] = "모두 복원",
+  ["ui.reset_all"] = "모두 복원",  -- i18n:keep
   ["ui.on"] = "켜짐",
   ["ui.off"] = "꺼짐",
-  ["ui.close"] = "닫기",
-  ["ui.none"] = "—",
+  ["ui.close"] = "닫기",  -- i18n:keep
+  ["ui.none"] = "—",  -- i18n:keep
 
   ["ui.list.empty"] = "목록이 비어 있습니다",
   ["ui.demo.title"] = "위젯 미리보기",
@@ -198,4 +198,24 @@ return {
   ["act.ui_page_next"] = "다음 페이지",
   ["act.ui_info"] = "도움말",
   ["act.ui_secondary"] = "보조 동작",
+
+  ["act.move_dir"] = "이동",
+  ["act.move_dir.up"] = "이동: 위",
+  ["act.move_dir.left"] = "이동: 왼쪽",
+  ["act.move_dir.down"] = "이동: 아래",
+  ["act.move_dir.right"] = "이동: 오른쪽",
+  ["act.select"] = "선택",
+  ["act.system_menu"] = "시스템 메뉴",
+  ["act.move_to"] = "여기로 이동",
+
+  ["demo.map.street_block"] = "거리 블록 (64x64)",
+  ["demo.map.suburb_house"] = "교외 주택 (단면)",
+  ["demo.mode.exterior"] = "외관",
+  ["demo.mode.cutaway"] = "단면",
+  ["demo.phase.dawn"] = "새벽",
+  ["demo.phase.day"] = "낮",
+  ["demo.phase.dusk"] = "해질녘",
+  ["demo.phase.night"] = "밤",
+  ["demo.hud.info"] = "M2 데모  |  {map}  |  {mode}  |  {time} {phase}  |  손전등 {light}  |  위치 ({x},{y})  |  쿼드 {quads}  청크 {chunks}  재구성 {rebuilt}",
+  ["demo.hud.help"] = "WASD/클릭: 이동/문  |  {interact}: 문  |  {mode}: 단면/외관  |  {roof}: 지붕  |  {map}: 맵 전환  |  {time_prev} {time_next}: 시간  |  {flash}: 손전등  |  {back}: 뒤로",
 }

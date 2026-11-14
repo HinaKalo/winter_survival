@@ -9,15 +9,15 @@ return {
   ["title.stub_notice"] = "该功能将在后续版本开放",
 
   ["ui.back"] = "返回",
-  ["ui.ok"] = "确定",
+  ["ui.ok"] = "确定",  -- i18n:keep
   ["ui.cancel"] = "取消",
   ["ui.confirm"] = "确认",
   ["ui.reset_default"] = "恢复默认",
-  ["ui.reset_all"] = "全部恢复默认",
+  ["ui.reset_all"] = "全部恢复默认",  -- i18n:keep
   ["ui.on"] = "开",
   ["ui.off"] = "关",
-  ["ui.close"] = "关闭",
-  ["ui.none"] = "—",
+  ["ui.close"] = "关闭",  -- i18n:keep
+  ["ui.none"] = "—",  -- i18n:keep
 
   ["ui.list.empty"] = "列表为空",
   ["ui.demo.title"] = "控件预览",
@@ -198,4 +198,24 @@ return {
   ["act.ui_page_next"] = "下一页",
   ["act.ui_info"] = "详情提示",
   ["act.ui_secondary"] = "次要操作",
+
+  ["act.move_dir"] = "移动",
+  ["act.move_dir.up"] = "移动：上",
+  ["act.move_dir.left"] = "移动：左",
+  ["act.move_dir.down"] = "移动：下",
+  ["act.move_dir.right"] = "移动：右",
+  ["act.select"] = "选择",
+  ["act.system_menu"] = "系统菜单",
+  ["act.move_to"] = "移动到此处",
+
+  ["demo.map.street_block"] = "街区 (64x64)",
+  ["demo.map.suburb_house"] = "郊区住宅（剖面）",
+  ["demo.mode.exterior"] = "外观",
+  ["demo.mode.cutaway"] = "剖面",
+  ["demo.phase.dawn"] = "黎明",
+  ["demo.phase.day"] = "白天",
+  ["demo.phase.dusk"] = "黄昏",
+  ["demo.phase.night"] = "夜晚",
+  ["demo.hud.info"] = "M2 演示  |  {map}  |  {mode}  |  {time} {phase}  |  手电 {light}  |  位置 ({x},{y})  |  四边形 {quads}  分块 {chunks}  重建 {rebuilt}",
+  ["demo.hud.help"] = "WASD/点击：移动/开门  |  {interact}：开门  |  {mode}：外观/剖面  |  {roof}：屋顶  |  {map}：切换地图  |  {time_prev} {time_next}：调时间  |  {flash}：手电  |  {back}：返回",
 }

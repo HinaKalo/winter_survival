@@ -10,6 +10,7 @@ local settings = require("ui.settings")
 local title = require("scenes.title")
 
 local autoquit_after = tonumber(os.getenv("ISO_AUTOQUIT") or "")
+local start_scene = os.getenv("WS_SCENE") or "title"
 local elapsed = 0
 
 function _init()
@@ -17,7 +18,12 @@ function _init()
   input.init()
   theme.init()
   settings.load()
-  scene.push(title)
+  if os.getenv("WS_LANG") then i18n.set_lang(os.getenv("WS_LANG")) end -- dev/screenshot override
+  if start_scene == "m2_demo" then
+    scene.push(require("scenes.m2_demo")) -- dev entry; the title menu never enters the demo
+  else
+    scene.push(title)
+  end
 end
 
 function _update(dt)

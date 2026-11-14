@@ -8,6 +8,10 @@ pub fn build(b: *std.Build) void {
     const backend = b.option(Backend, "backend", "Delve backend: sokol (default), headless, null") orelse .sokol;
     const probe_file = b.option([]const u8, "probe", "Probe script for `zig build probe`") orelse "tests/probe/smoke.lua";
     const probe_audio = b.option(bool, "probe-audio", "Run the probe with audio playback on (default true)") orelse true;
+    const balance_runs = b.option(u32, "runs", "Balance bot runs (default 1)") orelse 1;
+    const balance_days = b.option(u32, "days", "Balance bot days per run (default 30)") orelse 30;
+    const balance_seed = b.option(u32, "seed", "Balance first seed (default 20261114)") orelse 20261114;
+    const balance_verify = b.option(bool, "verify", "Run the determinism replay (default true)") orelse true;
 
     const dep = b.dependency("delve", .{
         .target = target,
@@ -86,6 +90,26 @@ pub fn build(b: *std.Build) void {
     luatest_cmd.addArgs(&.{ "--save-dir", ".zig-cache/test-saves/luatest", "--script", "tests/lua/main.lua", "--probe", "tests/lua/runner.lua", "--no-audio" });
     const luatest_step = b.step("luatest", "Run Lua unit tests in headless mode");
     luatest_step.dependOn(&luatest_cmd.step);
+
+    // balance：30 天机器人模拟（M3 验收；M10 用 -Druns=500）
+    const rm_balance_saves = b.addSystemCommand(&.{
+        "python3", "-c", "import shutil, sys; shutil.rmtree(sys.argv[1], ignore_errors=True)", ".zig-cache/test-saves/balance",
+    });
+    const mk_balance_out = b.addSystemCommand(&.{
+        "python3", "-c", "import os; os.makedirs('out/balance', exist_ok=True)",
+    });
+    const balance_cmd = b.addRunArtifact(exe);
+    balance_cmd.setCwd(b.path("."));
+    balance_cmd.step.dependOn(b.getInstallStep());
+    balance_cmd.step.dependOn(&rm_balance_saves.step);
+    balance_cmd.step.dependOn(&mk_balance_out.step);
+    balance_cmd.addArgs(&.{ "--save-dir", ".zig-cache/test-saves/balance", "--script", "tests/lua/balance_main.lua", "--probe", "tests/lua/balance_runner.lua", "--no-audio" });
+    balance_cmd.setEnvironmentVariable("WS_BALANCE_RUNS", b.fmt("{d}", .{balance_runs}));
+    balance_cmd.setEnvironmentVariable("WS_BALANCE_DAYS", b.fmt("{d}", .{balance_days}));
+    balance_cmd.setEnvironmentVariable("WS_BALANCE_SEED", b.fmt("{d}", .{balance_seed}));
+    balance_cmd.setEnvironmentVariable("WS_BALANCE_VERIFY", if (balance_verify) "true" else "false");
+    const balance_step = b.step("balance", "Run the 30-day balance bot (-Druns, -Ddays, -Dseed, -Dverify)");
+    balance_step.dependOn(&balance_cmd.step);
 
     // test：纯逻辑单元测试根 src/iso/tests.zig
     const test_mod = b.createModule(.{

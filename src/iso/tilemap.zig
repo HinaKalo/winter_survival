@@ -8,7 +8,22 @@ const camera = @import("camera.zig");
 pub const GridPos = coords.GridPos;
 pub const Ray = camera.Ray;
 
-pub const TileDef = struct { top: u16, side: u16, solid: bool = false, liquid: bool = false };
+pub const TileDef = struct {
+    top: u16,
+    side: u16,
+    solid: bool = false,
+    liquid: bool = false,
+    @"opaque": bool = false,
+    tag: u8 = 0,
+    side_cap: u16 = 0xFFFF,
+    /// 最下面一段（level 0–1）侧面的图集格；0xFFFF = 同 `side`。用于外观模式的门/窗列（M2-PLAN §5.1）。
+    side_base: u16 = 0xFFFF,
+};
+pub const Flag = struct {
+    pub const blocked: u8 = 1;
+    pub const @"opaque": u8 = 2;
+};
+pub const chunk_size: u32 = 16;
 /// kind 0 = 空（不绘制、不可走）
 pub const Tile = struct { kind: u16 = 0, height: u8 = 0 };
 pub const TileHit = struct { x: i32, y: i32, point: Vec3 };
@@ -24,6 +39,12 @@ pub const TileMap = struct {
     width: u32,
     height: u32,
     tiles: []Tile,
+    flags: []u8,
+    tag: []u8,
+    chunk_dirty: []bool,
+    chunks_w: u32,
+    chunks_h: u32,
+    opacity_version: u32 = 0,
     defs: std.ArrayList(TileDef),
     height_unit: f32 = 0.5,
     base_depth: f32 = 1.0,
@@ -36,31 +57,87 @@ pub const TileMap = struct {
         if (w > max or h > max or @as(u64, w) * h > max) return error.MapTooLarge;
     }
 
+    fn chunkDims(w: u32, h: u32) struct { cw: u32, ch: u32 } {
+        return .{
+            .cw = if (w == 0) 0 else (w + chunk_size - 1) / chunk_size,
+            .ch = if (h == 0) 0 else (h + chunk_size - 1) / chunk_size,
+        };
+    }
+
     pub fn init(allocator: Allocator, w: u32, h: u32) !TileMap {
         try checkDims(w, h);
-        const tiles = try allocator.alloc(Tile, @as(usize, w) * h);
+        const n = @as(usize, w) * h;
+        const tiles = try allocator.alloc(Tile, n);
         errdefer allocator.free(tiles);
         @memset(tiles, Tile{});
+        const flags = try allocator.alloc(u8, n);
+        errdefer allocator.free(flags);
+        @memset(flags, 0);
+        const tag = try allocator.alloc(u8, n);
+        errdefer allocator.free(tag);
+        @memset(tag, 0);
+        const cd = chunkDims(w, h);
+        const chunk_dirty = try allocator.alloc(bool, @as(usize, cd.cw) * cd.ch);
+        errdefer allocator.free(chunk_dirty);
+        @memset(chunk_dirty, true);
         var defs: std.ArrayList(TileDef) = .empty;
         errdefer defs.deinit(allocator);
         try defs.append(allocator, .{ .top = 0, .side = 0 }); // 下标 0 预留为空
-        return .{ .allocator = allocator, .width = w, .height = h, .tiles = tiles, .defs = defs };
+        return .{
+            .allocator = allocator,
+            .width = w,
+            .height = h,
+            .tiles = tiles,
+            .flags = flags,
+            .tag = tag,
+            .chunk_dirty = chunk_dirty,
+            .chunks_w = cd.cw,
+            .chunks_h = cd.ch,
+            .defs = defs,
+        };
     }
 
     pub fn deinit(self: *TileMap) void {
         self.allocator.free(self.tiles);
+        self.allocator.free(self.flags);
+        self.allocator.free(self.tag);
+        self.allocator.free(self.chunk_dirty);
         self.defs.deinit(self.allocator);
         self.tiles = &.{};
+        self.flags = &.{};
+        self.tag = &.{};
+        self.chunk_dirty = &.{};
     }
 
     pub fn resize(self: *TileMap, w: u32, h: u32) !void {
         try checkDims(w, h);
-        const tiles = try self.allocator.alloc(Tile, @as(usize, w) * h);
+        const n = @as(usize, w) * h;
+        const tiles = try self.allocator.alloc(Tile, n);
+        errdefer self.allocator.free(tiles);
         @memset(tiles, Tile{});
+        const flags = try self.allocator.alloc(u8, n);
+        errdefer self.allocator.free(flags);
+        @memset(flags, 0);
+        const tag = try self.allocator.alloc(u8, n);
+        errdefer self.allocator.free(tag);
+        @memset(tag, 0);
+        const cd = chunkDims(w, h);
+        const chunk_dirty = try self.allocator.alloc(bool, @as(usize, cd.cw) * cd.ch);
+        @memset(chunk_dirty, true);
+
         self.allocator.free(self.tiles);
+        self.allocator.free(self.flags);
+        self.allocator.free(self.tag);
+        self.allocator.free(self.chunk_dirty);
         self.tiles = tiles;
+        self.flags = flags;
+        self.tag = tag;
+        self.chunk_dirty = chunk_dirty;
+        self.chunks_w = cd.cw;
+        self.chunks_h = cd.ch;
         self.width = w;
         self.height = h;
+        self.opacity_version +%= 1;
         self.dirty = true;
     }
 
@@ -90,14 +167,98 @@ pub const TileMap = struct {
         return self.tiles[self.index(x, y)];
     }
 
+    /// 按新 kind 的 TileDef 重置格子的 flags（blocked <- solid、opaque <- opaque）与 tag；kind 0 或未定义则清零。
+    fn resetCellFromDef(self: *TileMap, idx: usize, kind: u16) void {
+        if (self.getDef(kind)) |d| {
+            var f: u8 = 0;
+            if (d.solid) f |= Flag.blocked;
+            if (d.@"opaque") f |= Flag.@"opaque";
+            self.flags[idx] = f;
+            self.tag[idx] = d.tag;
+        } else {
+            self.flags[idx] = 0;
+            self.tag[idx] = 0;
+        }
+    }
+
     pub fn set(self: *TileMap, x: i32, y: i32, kind: u16, height: u8) void {
         if (!self.inBounds(x, y)) return;
-        self.tiles[self.index(x, y)] = .{ .kind = kind, .height = height };
-        self.dirty = true;
+        const idx = self.index(x, y);
+        const old_op = self.isOpaque(x, y);
+        self.tiles[idx] = .{ .kind = kind, .height = height };
+        self.resetCellFromDef(idx, kind);
+        if (old_op != self.isOpaque(x, y)) self.opacity_version +%= 1;
+        self.markDirtyAround(x, y);
     }
 
     pub fn fill(self: *TileMap, kind: u16, height: u8) void {
         @memset(self.tiles, Tile{ .kind = kind, .height = height });
+        if (self.tiles.len > 0) {
+            self.resetCellFromDef(0, kind);
+            @memset(self.flags, self.flags[0]);
+            @memset(self.tag, self.tag[0]);
+        }
+        self.opacity_version +%= 1;
+        self.markAllDirty();
+    }
+
+    pub fn getFlags(self: *const TileMap, x: i32, y: i32) u8 {
+        if (!self.inBounds(x, y)) return Flag.blocked | Flag.@"opaque";
+        return self.flags[self.index(x, y)];
+    }
+
+    pub fn setFlag(self: *TileMap, x: i32, y: i32, mask: u8, on: bool) void {
+        if (!self.inBounds(x, y)) return;
+        const idx = self.index(x, y);
+        const old = self.flags[idx];
+        const next = if (on) old | mask else old & ~mask;
+        self.flags[idx] = next;
+        if (((old ^ next) & Flag.@"opaque") != 0) self.opacity_version +%= 1;
+    }
+
+    pub fn getTag(self: *const TileMap, x: i32, y: i32) u8 {
+        if (!self.inBounds(x, y)) return 0;
+        return self.tag[self.index(x, y)];
+    }
+
+    pub fn setTag(self: *TileMap, x: i32, y: i32, v: u8) void {
+        if (!self.inBounds(x, y)) return;
+        self.tag[self.index(x, y)] = v;
+    }
+
+    pub fn isOpaque(self: *const TileMap, x: i32, y: i32) bool {
+        if (!self.inBounds(x, y)) return true;
+        const idx = self.index(x, y);
+        if ((self.flags[idx] & Flag.@"opaque") != 0) return true;
+        const t = self.tiles[idx];
+        if (t.kind == 0) return false;
+        const def = self.getDef(t.kind) orelse return false;
+        return def.@"opaque";
+    }
+
+    pub fn markDirtyAround(self: *TileMap, x: i32, y: i32) void {
+        if (self.chunks_w == 0 or self.chunks_h == 0) return;
+        const x0 = @max(0, x - 1);
+        const y0 = @max(0, y - 1);
+        const x1 = @min(@as(i32, @intCast(self.width)) - 1, x + 1);
+        const y1 = @min(@as(i32, @intCast(self.height)) - 1, y + 1);
+        if (x0 > x1 or y0 > y1) return;
+        const cx0: u32 = @intCast(@divTrunc(x0, @as(i32, @intCast(chunk_size))));
+        const cy0: u32 = @intCast(@divTrunc(y0, @as(i32, @intCast(chunk_size))));
+        const cx1: u32 = @intCast(@divTrunc(x1, @as(i32, @intCast(chunk_size))));
+        const cy1: u32 = @intCast(@divTrunc(y1, @as(i32, @intCast(chunk_size))));
+        var cy = cy0;
+        while (cy <= cy1) : (cy += 1) {
+            var cx = cx0;
+            while (cx <= cx1) : (cx += 1) {
+                self.chunk_dirty[@as(usize, cy) * self.chunks_w + cx] = true;
+            }
+        }
+        self.dirty = true;
+    }
+
+    pub fn markAllDirty(self: *TileMap) void {
+        @memset(self.chunk_dirty, true);
         self.dirty = true;
     }
 
@@ -110,6 +271,7 @@ pub const TileMap = struct {
     pub fn isWalkable(self: *const TileMap, x: i32, y: i32) bool {
         const t = self.get(x, y) orelse return false;
         if (t.kind == 0) return false;
+        if ((self.flags[self.index(x, y)] & Flag.blocked) != 0) return false;
         const def = self.getDef(t.kind) orelse return false;
         return !def.solid and !def.liquid;
     }
@@ -450,4 +612,68 @@ test "tileCenter / worldToTile / map dims garbage" {
     try testing.expectError(error.MapTooLarge, TileMap.init(testing.allocator, 100_000, 100_000));
     try testing.expectError(error.MapTooLarge, m.resize(std.math.maxInt(u32), 1));
     try testing.expectEqual(@as(u32, 4), m.width); // resize 失败不改变状态
+}
+
+test "flags, tags, opacity_version, and chunk_dirty" {
+    var m = try TileMap.init(testing.allocator, 32, 32);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    m.fill(floor, 0);
+    @memset(m.chunk_dirty, false);
+    m.dirty = false;
+
+    const v0 = m.opacity_version;
+    m.setFlag(15, 15, Flag.blocked | Flag.@"opaque", true);
+    try testing.expect(!m.dirty);
+    for (m.chunk_dirty) |d| try testing.expect(!d);
+    try testing.expect(!m.isWalkable(15, 15));
+    try testing.expect(m.isOpaque(15, 15));
+    try testing.expect(m.opacity_version != v0);
+    try testing.expectEqual(Flag.blocked | Flag.@"opaque", m.getFlags(-1, 0));
+
+    m.setTag(3, 4, 7);
+    try testing.expectEqual(@as(u8, 7), m.getTag(3, 4));
+    try testing.expectEqual(@as(u8, 0), m.getTag(99, 99));
+
+    m.set(16, 16, floor, 1);
+    var dirty_n: usize = 0;
+    for (m.chunk_dirty) |d| if (d) {
+        dirty_n += 1;
+    };
+    try testing.expectEqual(@as(usize, 4), dirty_n);
+}
+
+test "set/fill reset flags and tag from the TileDef of the new kind" {
+    var m = try TileMap.init(std.testing.allocator, 4, 4);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    const wall = try m.defineTile(.{ .top = 2, .side = 2, .solid = true, .@"opaque" = true, .tag = 7 });
+
+    m.set(1, 1, wall, 2);
+    try std.testing.expectEqual(Flag.blocked | Flag.@"opaque", m.getFlags(1, 1));
+    try std.testing.expectEqual(@as(u8, 7), m.getTag(1, 1));
+
+    // 覆写为地面：旧的 blocked/opaque/tag 必须被清掉，并递增 opacity_version
+    m.setFlag(1, 1, 4, true); // 额外标志位也会被重置
+    const v0 = m.opacity_version;
+    m.set(1, 1, floor, 0);
+    try std.testing.expectEqual(@as(u8, 0), m.getFlags(1, 1));
+    try std.testing.expectEqual(@as(u8, 0), m.getTag(1, 1));
+    try std.testing.expect(m.opacity_version != v0);
+    try std.testing.expect(m.isWalkable(1, 1));
+
+    // 擦除（kind 0）也清零
+    m.set(1, 1, wall, 1);
+    m.set(1, 1, 0, 0);
+    try std.testing.expectEqual(@as(u8, 0), m.getFlags(1, 1));
+    try std.testing.expectEqual(@as(u8, 0), m.getTag(1, 1));
+
+    m.fill(wall, 1);
+    try std.testing.expectEqual(Flag.blocked | Flag.@"opaque", m.getFlags(3, 3));
+    try std.testing.expectEqual(@as(u8, 7), m.getTag(0, 2));
+    @memset(m.chunk_dirty, false);
+    m.fill(floor, 0);
+    try std.testing.expectEqual(@as(u8, 0), m.getFlags(3, 3));
+    try std.testing.expectEqual(@as(u8, 0), m.getTag(0, 2));
+    try std.testing.expect(m.chunk_dirty[0]);
 }

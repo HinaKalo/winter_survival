@@ -7,6 +7,7 @@ import importlib.util
 import inspect
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -159,6 +160,14 @@ class ProbeJUnitTest(unittest.TestCase):
             with quiet():
                 rc = PJ.convert(logp, os.path.join(d, "probe.xml"))
             self.assertEqual(rc, 1)
+
+    def test_convert_forbidden_quad_warning_exits_1(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        log = d / "p.log"
+        log.write_text("PROBE PASS a\nwarning: iso: chunk quad budget (10000) exceeded, remaining quads skipped\n"
+                       "PROBE SUMMARY 1/1 passed\n", encoding="utf-8")
+        self.assertEqual(PJ.convert(log, d / "p.xml"), 1)
 
     def test_convert_with_failed_checks_still_exits_0(self):
         # a complete run with failing checks is a valid report; the probe's exit code gates the build

@@ -25,6 +25,8 @@ from pathlib import Path
 CHECK_RE = re.compile(r"PROBE (PASS|FAIL) (.*)$")
 INFO_RE = re.compile(r"PROBE info (.*)$")
 SUMMARY_RE = re.compile(r"PROBE SUMMARY (\d+)/(\d+) passed\b")
+# Engine warnings that fail the run even when every check passed (M2-PLAN §5.2 R5c: quad overflow).
+FORBIDDEN = ("iso: chunk quad budget",)
 DONE_RE = re.compile(r"PROBE done: .*? after (\d+(?:\.\d+)?)s")
 # characters that are not allowed in XML 1.0 (and would make Jenkins' parser reject the file)
 _XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
@@ -107,7 +109,9 @@ def convert(log_path, junit_path, suite: str = "probe") -> int:
         text = ""
         read_error = "cannot read probe log %s: %s" % (log_path, e)
     parsed = parse_log(text)
-    root, probs = build_report(parsed, suite, [read_error] if read_error else [])
+    extra = [read_error] if read_error else []
+    extra += ["forbidden engine warning in log: %r" % pat for pat in FORBIDDEN if pat in text]
+    root, probs = build_report(parsed, suite, extra)
     jp = Path(junit_path)
     jp.parent.mkdir(parents=True, exist_ok=True)
     ET.ElementTree(root).write(str(jp), encoding="utf-8", xml_declaration=True)

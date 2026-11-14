@@ -5,6 +5,11 @@ test {
     std.testing.refAllDecls(@import("coords.zig"));
     std.testing.refAllDecls(@import("camera.zig"));
     std.testing.refAllDecls(@import("tilemap.zig"));
+    std.testing.refAllDecls(@import("pathfind.zig"));
+    std.testing.refAllDecls(@import("vision.zig"));
+    std.testing.refAllDecls(@import("lightmap.zig"));
+    std.testing.refAllDecls(@import("tilemesh.zig"));
+    std.testing.refAllDecls(@import("overlay.zig"));
     std.testing.refAllDecls(@import("world.zig"));
     std.testing.refAllDecls(@import("vm.zig"));
 }

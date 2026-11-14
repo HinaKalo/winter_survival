@@ -75,6 +75,55 @@ function M.stop_bgm(fade)
 	k.stop_bgm(num(fade, 1.0))
 end
 
+local function layer_num(fn, layer)
+	if type(layer) ~= "number" or layer < 1 or layer > 3 or layer ~= math.floor(layer) then
+		warn_once(fn .. ":layer", fn .. ": layer must be 1..3")
+		return nil
+	end
+	return layer
+end
+
+function M.amb(layer, id, fade)
+	layer = layer_num("amb", layer)
+	if not layer then
+		return false
+	end
+	id = str("amb", "id", id)
+	if not id then
+		return false
+	end
+	return k.amb(layer, id, num(fade, 1.0))
+end
+
+function M.stop_amb(layer, fade)
+	layer = layer_num("stop_amb", layer)
+	if not layer then
+		return
+	end
+	k.stop_amb(layer, num(fade, 1.0))
+end
+
+function M.amb_gain(layer, v, fade)
+	layer = layer_num("amb_gain", layer)
+	if not layer then
+		return false
+	end
+	v = tonumber(v)
+	if v == nil then
+		warn_once("amb_gain:v", "amb_gain: v must be a number")
+		return false
+	end
+	return k.amb_gain(layer, v, num(fade, 0.2))
+end
+
+function M.current_amb(layer)
+	layer = layer_num("current_amb", layer)
+	if not layer then
+		return nil
+	end
+	return k.current_amb(layer)
+end
+
 function M.set_bus(name, v)
 	name = str("set_bus", "name", name)
 	if not name then

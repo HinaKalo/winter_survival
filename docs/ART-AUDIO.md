@@ -2,7 +2,7 @@
 
 本文是总计划中美术与音频部分（原计划 §5，现由本文承接）的完整展开。已确认的决定（PLAN §0 的 D4、D5、D6、D13；ENGINE-PLAN §A1 第 4、5、11、12、21 条）原样沿用，不在此重议。
 
-读者：美术与音频管线的实现者（`tools/art/`、`tools/gen_assets.py`、`assets_src/`、`genai/`、`audio/`）。
+读者：美术与音频管线的实现者（`tools/art/`、`tools/gen_m2_placeholders.py`、`assets_src/`、`genai/`、`audio/`）。
 
 ## 0. 不可动摇的像素与引擎基准
 
@@ -1118,7 +1118,7 @@ python3 ~/dev/winter_survival/tools/assets.py art check
 }
 ```
 
-（M2 起的占位条目 `source` 为 `placeholder`；正式资产替换时改为实际来源，`tools/gen_assets.py` 的占位图须与此表中的 `size`/`frame` 一致，保证占位到正式替换时代码无需改动。）
+（M2 起的占位条目 `source` 为 `placeholder`；正式资产替换时改为实际来源，`tools/gen_m2_placeholders.py` 的占位图须与此表中的 `size`/`frame` 一致，保证占位到正式替换时代码无需改动。）
 
 ### 12.2 `tools/assets.py check` 需要覆盖的规则
 

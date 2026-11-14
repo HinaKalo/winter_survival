@@ -51,7 +51,7 @@ iso-base/
   assets/textures/tiles.png 瓦片图集（生成）
   assets/sprites/hero.png   主角 4 方向 × 4 帧（生成）
   assets/sprites/slime.png  史莱姆 1 行 × 4 帧（生成）
-  tools/gen_assets.py       Pillow 占位美术生成器
+  tools/gen_m2_placeholders.py  Pillow 占位美术生成器（M2 起；原 gen_assets.py 已删）
 ```
 
 ## 2. 接口定义
@@ -71,7 +71,6 @@ pub const Ray = struct { origin: Vec3, dir: Vec3 };
 pub const IsoCamera = struct {
     target: Vec3 = Vec3.zero,
     yaw: f32 = 45.0, pitch: f32 = 30.0,
-    yaw_goal: f32 = 45.0,          // rotateStep 设定，tick 平滑逼近（每秒 ~8 倍差值的指数平滑）
     distance: f32 = 60.0,
     zoom: f32 = 1.0, min_zoom: f32 = 0.25, max_zoom: f32 = 4.0,
     view_height: f32 = 14.0,
@@ -85,7 +84,6 @@ pub const IsoCamera = struct {
     pub fn forward(self: *const IsoCamera) Vec3;          // eye→target 单位向量
     pub fn right(self: *const IsoCamera) Vec3;
     pub fn camUp(self: *const IsoCamera) Vec3;
-    pub fn rotateStep(self: *IsoCamera, steps: i32) void; // yaw_goal += 90*steps
     pub fn setZoom(self: *IsoCamera, z: f32) void;        // clamp
     pub fn tick(self: *IsoCamera, dt: f32) void;          // yaw 平滑 + follow 平滑
     pub fn update(self: *IsoCamera, viewport_w: f32, viewport_h: f32) void; // 计算 view/proj
@@ -208,7 +206,7 @@ pub fn register(cfg: Config) !void; // 注册 iso_world(-70) 与 iso_script_host
 | `map_top_y(x,y)` / `map_walkable(x,y)` / `map_can_step(fx,fy,tx,ty)` | |
 | `path_find(x0,y0,x1,y1)` → `{{x,y},...}` 或 nil | 结果用 api 内静态缓冲 |
 | `camera_set_target(x,y,z)` / `camera_get_target()` → `{x,y,z}` | |
-| `camera_follow(id)`（0 取消）/ `camera_rotate(steps)` / `camera_set_angles(yaw,pitch)` / `camera_get_yaw()` | |
+| `camera_follow(id)`（0 取消）/ `camera_get_yaw()`（恒为 45；旋转接口已按 PLAN D6 删除） | |
 | `camera_set_zoom(z)` / `camera_get_zoom()` / `camera_set_view_height(h)` | |
 | `screen_to_tile(sx,sy)` → `{x,y}` 或 nil / `mouse_tile()` → `{x,y}` 或 nil / `world_to_screen(x,y,z)` → `{sx,sy}` | 用 raycastPick |
 | `sheet_load(path, frame_w, frame_h)` → sheet id（0 失败） | |

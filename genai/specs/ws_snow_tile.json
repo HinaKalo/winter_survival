@@ -1,0 +1,13 @@
+{
+  "name": "ws_snow_tile",
+  "kind": "tile",
+  "prompt": "winter snow ground tile, muted cool grey-blue shadows, subtle wind-packed snow drift, flat pixel art, seamless texture",
+  "negative": "fine noise, photo texture, pure white, bright cyan",
+  "seed": 2002,
+  "size": [1024, 1024],
+  "pixel": {
+    "target": [64, 64],
+    "margin": 0,
+    "max_colors": 12
+  }
+}
