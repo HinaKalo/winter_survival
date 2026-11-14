@@ -37,8 +37,8 @@ end
 
 function M.node_visible(name, view_floor, state)
   if starts(name, "roof") or starts(name, "exterior") or starts(name, "EXT_") then return false end
-  if name == "stair_B1_1F" then return view_floor == "B1" or view_floor == "F1" end
-  if name == "stair_1F_2F" then return view_floor == "F1" or view_floor == "F2" end
+  if name == "stair_B1_1F" then return view_floor == "B1" end -- below the 1F slab it pokes out of the house edge
+  if name == "stair_1F_2F" then return view_floor == "F1" end -- same: pokes out under the 2F slab
   local f = floor_of(name)
   if f and f ~= view_floor then return false end
   if not f then return true end

@@ -271,13 +271,13 @@ function T.home3d_main_floor_view()
   local s = hs.new(2)
   stations_off(s.state)
   local v = home3d.visibility(NAMES, "F1", s.state)
-  for _, n in ipairs({ "F1_floor", "F1_wall_low", "F1_bed", "DRESS_F1_calendar", "stair_B1_1F", "stair_1F_2F",
+  for _, n in ipairs({ "F1_floor", "F1_wall_low", "F1_bed", "DRESS_F1_calendar", "stair_1F_2F",
     "F1_woodstove_off", "F1_hearth_off" }) do
     assert(v[n] == true, n .. " visible on F1")
   end
   for _, n in ipairs({ "F1_wall_high", "F1_woodstove_on", "F1_hearth_on", "B1_floor", "B1_cot_1", "F2_floor",
     "DRESS_B1_floor_ice", "DRESS_F2_war_floor_shards", "roof_panel_0", "roof_snow_1", "exterior_snow",
-    "exterior_snowdrift_01", "EXT_DRESS_F1_horizontal_siding", "B1_boiler_off" }) do
+    "exterior_snowdrift_01", "EXT_DRESS_F1_horizontal_siding", "B1_boiler_off", "stair_B1_1F" }) do
     assert(v[n] == false, n .. " hidden on F1")
   end
   for _, n in ipairs(NAMES) do assert(v[n] == home3d.node_visible(n, "F1", s.state), n) end
@@ -291,7 +291,7 @@ function T.home3d_basement_and_attic_views()
   assert(b.B1_boiler_off and not b.B1_boiler_on)
   assert(not b.B1_wall_high and not b.stair_1F_2F and not b.F1_floor and not b.F2_floor and not b.roof_panel_0)
   local a = home3d.visibility(NAMES, "F2", s.state)
-  assert(a.F2_floor and a.F2_wall_low and a.F2_kid_bed and a.DRESS_F2_war_floor_shards and a.stair_1F_2F)
+  assert(a.F2_floor and a.F2_wall_low and a.F2_kid_bed and a.DRESS_F2_war_floor_shards and not a.stair_1F_2F)
   assert(not a.F2_wall_high and not a.stair_B1_1F and not a.F1_floor and not a.roof_snow_1)
 end
 

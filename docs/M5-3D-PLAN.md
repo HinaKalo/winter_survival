@@ -137,7 +137,7 @@ home3d.visibility(names, view_floor, state) -> { [name] = bool }
 
 规则（按顺序，先命中先用）：
 1. `roof*`、`exterior*`、`EXT_*` → 隐藏（剖切视图不画屋顶和外观）。
-2. `stair_B1_1F` 在 B1、F1 显示；`stair_1F_2F` 在 F1、F2 显示。
+2. `stair_B1_1F` 只在 B1 显示（在 1F 视图里它从楼板下方伸出房子边缘，截图核验后改）；`stair_1F_2F` 只在 F1 显示（同理）。每段楼梯只在它起步的那层显示。
 3. 节点所属楼层：`B1_` / `F1_` / `F2_` 前缀，或 `DRESS_B1_` / `DRESS_F1_` / `DRESS_F2_`；不是查看楼层 → 隐藏。
 4. `<层>_wall_high` → 隐藏（矮墙剖切）。
 5. 开关成对：`F1_woodstove_on/off` 对应 woodstove 站点，`F1_hearth_on/off` 对应 hearth 站点；“开” = 站点 `on and hp > 0`。`_on` 只在开时显示，`_off` 反之。`B1_boiler_on/off`：没有对应站点，恒为 off。
