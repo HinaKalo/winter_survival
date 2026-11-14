@@ -16,6 +16,23 @@ local function top_group()
   return M.groups[#M.groups]
 end
 
+local function find_group(id)
+  for i = #M.groups, 1, -1 do
+    if M.groups[i].id == id then return M.groups[i] end
+  end
+  return nil
+end
+
+-- While a modal/panel draws, it owns registration. Without an explicit target,
+-- registrations from screens below a modal are ignored (UI-UX §5.5).
+function M.set_target(group_id)
+  M._target = group_id
+end
+
+function M.clear_target()
+  M._target = nil
+end
+
 function M.push_group(id, opts)
   opts = opts or {}
   local g = {
@@ -48,6 +65,7 @@ function M.clear()
   M.groups = {}
   M.current = nil
   M.hover = nil
+  M._target = nil
 end
 
 function M.begin_frame()
@@ -58,7 +76,13 @@ function M.begin_frame()
 end
 
 function M.register(elem)
-  local g = top_group()
+  local g
+  if M._target then
+    g = find_group(M._target)
+  else
+    g = top_group()
+    if g and g.modal then return end
+  end
   if not g then return end
   -- Only top group accepts registrations when modal or active
   if elem.focusable == false then return end

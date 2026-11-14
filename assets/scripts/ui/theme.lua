@@ -24,6 +24,19 @@ M.colors = {
   white    = { 1, 1, 1, 1 },
 }
 
+-- Layout constants owned by PANEL (PARALLEL-PLAN §2 C5). HOME/RAID read only.
+M.layout = {
+  safe_margin = 16,
+  hintbar = { x = 0, y = -28, w = 1280, h = 28 },
+  panel_max = { w = 1152, h = 640, margin = 32 },
+  avatar_card = { w = 176, h = 72, gap = 4 },
+  selected_panel = { w = 480, h = 136 },
+  slot = 48,
+  slot_gap = 4,
+  list_row = 40,
+  glyph = 24,
+}
+
 M.skin_rects = {
   panel        = { 0, 0, 48, 48, 12, 12, 12, 12 },
   btn_normal   = { 48, 0, 32, 32, 8, 8, 8, 8 },
