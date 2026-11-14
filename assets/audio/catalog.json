@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "sounds": [
+    {
+      "id": "bgm/street_chip",
+      "path": "assets/audio/bgm/street_chip.ogg",
+      "kind": "bgm",
+      "category": null,
+      "loop": true,
+      "loop_start": 0,
+      "loop_length": 1228800,
+      "frames": 1228800,
+      "sample_rate": 48000,
+      "channels": 2,
+      "volume": 1.0
+    },
+    {
+      "id": "sfx/blip",
+      "path": "assets/audio/sfx/blip.wav",
+      "kind": "sfx",
+      "category": "ui",
+      "loop": false,
+      "loop_start": 0,
+      "loop_length": 0,
+      "frames": 3001,
+      "sample_rate": 48000,
+      "channels": 1,
+      "volume": 1.0
+    },
+    {
+      "id": "sfx/coin",
+      "path": "assets/audio/sfx/coin.wav",
+      "kind": "sfx",
+      "category": "pickup",
+      "loop": false,
+      "loop_start": 0,
+      "loop_length": 0,
+      "frames": 25961,
+      "sample_rate": 48000,
+      "channels": 1,
+      "volume": 1.0
+    },
+    {
+      "id": "sfx/hit_light",
+      "path": "assets/audio/sfx/hit_light.wav",
+      "kind": "sfx",
+      "category": "hit",
+      "loop": false,
+      "loop_start": 0,
+      "loop_length": 0,
+      "frames": 2758,
+      "sample_rate": 48000,
+      "channels": 1,
+      "volume": 1.0
+    },
+    {
+      "id": "sfx/jump",
+      "path": "assets/audio/sfx/jump.wav",
+      "kind": "sfx",
+      "category": "body",
+      "loop": false,
+      "loop_start": 0,
+      "loop_length": 0,
+      "frames": 1256,
+      "sample_rate": 48000,
+      "channels": 1,
+      "volume": 1.0
+    },
+    {
+      "id": "sfx/swing1",
+      "path": "assets/audio/sfx/swing1.wav",
+      "kind": "sfx",
+      "category": "swing",
+      "loop": false,
+      "loop_start": 0,
+      "loop_length": 0,
+      "frames": 1852,
+      "sample_rate": 48000,
+      "channels": 1,
+      "volume": 1.0
+    },
+    {
+      "id": "sfx/ui",
+      "path": "assets/audio/sfx/ui.wav",
+      "kind": "sfx",
+      "category": "ui",
+      "loop": false,
+      "loop_start": 0,
+      "loop_length": 0,
+      "frames": 1044,
+      "sample_rate": 48000,
+      "channels": 1,
+      "volume": 1.0
+    }
+  ]
+}

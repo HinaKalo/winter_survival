@@ -1,0 +1,17 @@
+.{
+    .name = .winter_survival,
+    .version = "0.1.0",
+    .fingerprint = 0x47cf2081eff5298f,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .delve = .{
+            .path = "../delve-framework",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "assets",
+    },
+}

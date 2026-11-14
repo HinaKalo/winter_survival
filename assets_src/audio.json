@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "defaults": {
+    "sample_rate": 48000,
+    "sfx": {
+      "true_peak_db": -1.0,
+      "trim_db": -60,
+      "fade_out_ms": 5,
+      "ogg_if_longer_s": 2.0,
+      "ogg_quality": 4
+    },
+    "bgm": {
+      "integrated_lufs": -20,
+      "true_peak_db": -1.5,
+      "lra": 11,
+      "ogg_quality": 5
+    }
+  },
+  "assets": [
+    {
+      "id": "sfx/ui",
+      "kind": "sfx",
+      "category": "ui",
+      "gain_db": -6,
+      "source": {
+        "type": "webaudio",
+        "voice": "ui",
+        "pitch": 1.0
+      }
+    },
+    {
+      "id": "sfx/blip",
+      "kind": "sfx",
+      "category": "ui",
+      "gain_db": -9,
+      "source": {
+        "type": "jsfxr",
+        "preset": "blipSelect",
+        "seed": 2
+      }
+    },
+    {
+      "id": "sfx/coin",
+      "kind": "sfx",
+      "category": "pickup",
+      "gain_db": -6,
+      "source": {
+        "type": "jsfxr",
+        "preset": "pickupCoin",
+        "seed": 7
+      }
+    },
+    {
+      "id": "sfx/swing1",
+      "kind": "sfx",
+      "category": "swing",
+      "gain_db": -3,
+      "source": {
+        "type": "webaudio",
+        "voice": "swing1",
+        "pitch": 1.0
+      }
+    },
+    {
+      "id": "sfx/hit_light",
+      "kind": "sfx",
+      "category": "hit",
+      "gain_db": 0,
+      "source": {
+        "type": "webaudio",
+        "voice": "hitLight",
+        "pitch": 1.0
+      }
+    },
+    {
+      "id": "sfx/jump",
+      "kind": "sfx",
+      "category": "body",
+      "gain_db": -3,
+      "source": {
+        "type": "webaudio",
+        "voice": "jump",
+        "pitch": 1.0
+      }
+    },
+    {
+      "id": "bgm/street_chip",
+      "kind": "bgm",
+      "loop": true,
+      "source": {
+        "type": "compose",
+        "renderer": "xm",
+        "style": "chip_action",
+        "seed": 3,
+        "bpm": 150,
+        "bars": 16,
+        "key": "A",
+        "mode": "minor"
+      }
+    }
+  ]
+}

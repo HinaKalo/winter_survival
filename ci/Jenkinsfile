@@ -1,0 +1,75 @@
+// Source (Linux controller: checkout + package + cheap checks) -> Windows GPU (zig build + unit tests + headless probe + real-GPU smoke).
+// The Windows agent cannot reach the controller's git daemon, so the sources are passed via stash.
+// Layout on both sides: <workspace>/winter_survival and <workspace>/delve-framework (build.zig.zon uses ../delve-framework).
+// Job name: winter_survival. The directory name `winter_survival` is used consistently; tools/new_game.py rewrites it for new games.
+pipeline {
+  agent none
+  options {
+    skipDefaultCheckout()
+    timeout(time: 60, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    disableConcurrentBuilds()
+    timestamps()
+  }
+  triggers { pollSCM('H/2 * * * *') }
+  stages {
+    stage('Source') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        dir('winter_survival') { checkout scm }
+        sh 'bash winter_survival/ci/setup_delve.sh delve-framework "$(cat winter_survival/ci/delve.rev)"'
+        dir('winter_survival') {
+          sh 'mkdir -p reports/linux'
+          sh 'python3 tools/assets.py check --junit reports/linux/assets.xml'
+          sh 'python3 ci/run_pytests.py --junit reports/linux/unit_py.xml'
+        }
+        stash name: 'src', includes: 'winter_survival/**,delve-framework/**', excludes: '**/.git/**,**/.zig-cache/**,**/zig-out/**,**/zig-pkg/**', useDefaultExcludes: false
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'winter_survival/reports/linux/*.xml'
+        }
+      }
+    }
+    stage('Windows GPU') {
+      agent { label 'windows && opengl' }
+      steps {
+        deleteDir()
+        unstash 'src'
+        // Each bat is a fresh cmd.exe, so paths are derived from %USERPROFILE% inside every step.
+        // Persistent toolchain/cache live outside the workspace (survive deleteDir).
+        bat '''
+          @echo on
+          set "ZIG_GLOBAL_CACHE_DIR=%USERPROFILE%\\.ci\\zig-cache"
+          python winter_survival\\ci\\setup_zig.py --dest "%USERPROFILE%\\.ci\\tools\\zig-0.16.0" --lua-mirror || exit /b 1
+        '''
+        dir('winter_survival') {
+          bat '''
+            @echo on
+            set "ZIG_GLOBAL_CACHE_DIR=%USERPROFILE%\\.ci\\zig-cache"
+            python ci\\zig_steps.py --zig "%USERPROFILE%\\.ci\\tools\\zig-0.16.0\\zig.exe" --log-dir reports\\windows --probe || exit /b 1
+          '''
+          // Order: probe first, then smoke. The probe builds with -Dbackend=headless and overwrites
+          // zig-out/bin/winter_survival.exe, so `zig build` restores the default (sokol, GPU) exe
+          // (a cache hit, no recompile) before the smoke test screenshots the real window.
+          bat '''
+            @echo on
+            set "ZIG_GLOBAL_CACHE_DIR=%USERPROFILE%\\.ci\\zig-cache"
+            "%USERPROFILE%\\.ci\\tools\\zig-0.16.0\\zig.exe" build -Dbackend=sokol || exit /b 1
+          '''
+          bat '''
+            @echo on
+            python ci\\smoke.py --exe zig-out\\bin\\winter_survival.exe --title "Thirty Below" --cwd . --seconds 6 --shot-at 3 --shot reports\\windows\\shot.png --log reports\\windows\\game.log || exit /b 1
+          '''
+        }
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'winter_survival/reports/windows/*.xml'
+          archiveArtifacts artifacts: 'winter_survival/reports/windows/**', allowEmptyArchive: true
+        }
+      }
+    }
+  }
+}
