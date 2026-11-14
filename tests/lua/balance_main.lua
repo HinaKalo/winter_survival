@@ -1,0 +1,1 @@
+-- balance entry script: intentionally empty; the probe drives the simulation.

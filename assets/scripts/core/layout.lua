@@ -136,7 +136,7 @@ function M.parse(template, variant, opts)
         local nx, ny = x + d[1], y + d[2]
         local nc = get(nx, ny)
         local key = ny .. "," .. nx
-        if nc and nc.kind == "floor" and not visit[key] then
+        if nc and is_open(nc) and not visit[key] then
           visit[key] = true
           qx[#qx + 1] = nx
           qy[#qy + 1] = ny
@@ -155,7 +155,7 @@ function M.parse(template, variant, opts)
   for y = 0, #v.grid - 1 do
     for x = 0, width - 1 do
       local cell = get(x, y)
-      if cell.kind == "floor" and not visit[y .. "," .. x] then
+      if is_open(cell) and not visit[y .. "," .. x] then
         local cells = room_of_flood(x, y)
         local id
         for _, c in ipairs(cells) do
@@ -197,7 +197,7 @@ function M.parse(template, variant, opts)
       local adjacent_rooms = {}
       for _, d in ipairs(DIRS) do
         local nc = neighbor(grid, cell.x, cell.y, d[1], d[2])
-        if nc and nc.kind == "floor" and nc.room then
+        if nc and is_open(nc) and nc.room then
           adjacent_rooms[nc.room] = true
         end
       end
