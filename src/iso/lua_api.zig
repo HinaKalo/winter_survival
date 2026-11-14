@@ -21,6 +21,7 @@ const vision = @import("vision.zig");
 const world_mod = @import("world.zig");
 const coords = @import("coords.zig");
 const overlay_mod = @import("overlay.zig");
+const model_mod = @import("model.zig");
 
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
@@ -434,6 +435,16 @@ pub fn entity_set_pickable(id: i64, b: bool) void {
     e.pickable = b;
 }
 
+pub fn entity_set_ghost(id: i64, b: bool) void {
+    const e = ent(id) orelse return;
+    e.ghost = b;
+}
+
+pub fn entity_get_ghost(id: i64) bool {
+    const e = ent(id) orelse return false;
+    return e.ghost;
+}
+
 pub fn entity_set_size(id: i64, w: f32, h: f32) void {
     if (!fin(w) or !fin(h) or w <= 0 or h <= 0) return;
     const e = ent(id) orelse return;
@@ -781,4 +792,72 @@ pub fn overlay_stats() [2]i32 {
         @intCast(@min(engine.overlays.total, std.math.maxInt(i32))),
         @intCast(@min(engine.overlays.rejected_atlas, std.math.maxInt(i32))),
     };
+}
+
+// ------------------------------------------------------------------ 3D 模型（.wsm）
+
+pub fn map_set_draw_tiles(b: bool) void {
+    engine.renderer.draw_tiles = b;
+}
+
+const ModelInfo = struct { nodes: i64, tris: i64, visible_tris: i64 };
+
+pub fn model_load(path: [*:0]const u8) ?i64 {
+    const allocator = mem.getAllocator();
+    const p = std.mem.span(path);
+    const bytes = std.Io.Dir.cwd().readFileAlloc(delve.io.getIo(), p, allocator, .limited(64 << 20)) catch |err| {
+        delve.debug.warning("iso: model_load: cannot read '{s}': {s}", .{ p, @errorName(err) });
+        return null;
+    };
+    defer allocator.free(bytes);
+    const m = model_mod.Model.parse(allocator, bytes) catch |err| {
+        delve.debug.warning("iso: model_load: bad model '{s}': {s}", .{ p, @errorName(err) });
+        return null;
+    };
+    const id = engine.addModel(m) orelse {
+        var mm = m;
+        mm.deinit(allocator);
+        delve.debug.warning("iso: model_load: out of memory for '{s}'", .{p});
+        return null;
+    };
+    return id;
+}
+
+pub fn model_unload(id: i64) void {
+    engine.removeModel(id);
+}
+
+pub fn model_info(id: i64) ?ModelInfo {
+    const inst = engine.findModel(id) orelse return null;
+    return .{
+        .nodes = @intCast(inst.model.nodes.len),
+        .tris = inst.model.triCount(),
+        .visible_tris = inst.model.visibleTris(),
+    };
+}
+
+var node_name_buf: [4096][]const u8 = undefined;
+
+pub fn model_nodes(id: i64) []const []const u8 {
+    const inst = engine.findModel(id) orelse return node_name_buf[0..0];
+    const n = @min(inst.model.nodes.len, node_name_buf.len);
+    for (inst.model.nodes[0..n], 0..) |node, i| node_name_buf[i] = node.name;
+    return node_name_buf[0..n];
+}
+
+pub fn model_set_visible(id: i64, pattern: [*:0]const u8, on: bool) i64 {
+    const inst = engine.findModel(id) orelse return 0;
+    return inst.setVisible(mem.getAllocator(), std.mem.span(pattern), on);
+}
+
+pub fn model_node_visible(id: i64, name: [*:0]const u8) ?bool {
+    const inst = engine.findModel(id) orelse return null;
+    const i = inst.model.findNode(std.mem.span(name)) orelse return null;
+    return inst.model.visible[i];
+}
+
+pub fn model_set_offset(id: i64, x: f32, y: f32, z: f32) void {
+    if (!fin3(x, y, z)) return;
+    const inst = engine.findModel(id) orelse return;
+    inst.setOffset(x, y, z);
 }

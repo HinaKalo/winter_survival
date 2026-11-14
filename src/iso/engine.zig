@@ -38,6 +38,9 @@ pub var pathfinder: pathfind.PathFinder = undefined;
 pub var world: world_mod.World = undefined;
 pub var camera: camera_mod.IsoCamera = .{};
 pub var renderer: render.WorldRenderer = undefined;
+/// 已加载的模型实例（id 从 1 起，运行期内不复用）；resetState 清空，clearWorld 不动
+pub var models: std.ArrayList(*render.ModelInstance) = .empty;
+var next_model_id: u32 = 1;
 /// 相机跟随的实体 id（0 = 不跟随）
 pub var follow_entity: u32 = 0;
 
@@ -90,6 +93,9 @@ fn onInit() !void {
 fn onCleanup() !void {
     if (!initialized) return;
     initialized = false;
+    dropModels();
+    models.deinit(mem.getAllocator());
+    models = .empty;
     renderer.deinit();
     world.deinit();
     pathfinder.deinit();
@@ -132,7 +138,48 @@ fn onLateTick(_: f32) void {
 
 fn onDraw() void {
     camera.update(viewportW(), viewportH());
-    renderer.draw(&map, &world, &camera, &lights, &overlays);
+    renderer.draw(&map, &world, &camera, &lights, &overlays, models.items);
+}
+
+pub fn addModel(m: @import("model.zig").Model) ?u32 {
+    const allocator = mem.getAllocator();
+    const inst = allocator.create(render.ModelInstance) catch return null;
+    inst.* = .{ .id = next_model_id, .model = m };
+    models.append(allocator, inst) catch {
+        allocator.destroy(inst);
+        return null;
+    };
+    next_model_id += 1;
+    return inst.id;
+}
+
+pub fn findModel(id: i64) ?*render.ModelInstance {
+    const u = std.math.cast(u32, id) orelse return null;
+    for (models.items) |m| {
+        if (m.id == u) return m;
+    }
+    return null;
+}
+
+pub fn removeModel(id: i64) void {
+    const u = std.math.cast(u32, id) orelse return;
+    const allocator = mem.getAllocator();
+    for (models.items, 0..) |m, i| {
+        if (m.id != u) continue;
+        _ = models.orderedRemove(i);
+        m.deinit(allocator);
+        allocator.destroy(m);
+        return;
+    }
+}
+
+pub fn dropModels() void {
+    const allocator = mem.getAllocator();
+    for (models.items) |m| {
+        m.deinit(allocator);
+        allocator.destroy(m);
+    }
+    models.clearRetainingCapacity();
 }
 
 pub fn clearWorld() void {
@@ -165,6 +212,8 @@ pub fn resetState() void {
     lights.fog = .{};
     overlays.clearAll();
     world.clear();
+    dropModels();
+    renderer.draw_tiles = true;
     follow_entity = 0;
     camera = .{
         .pixels_per_unit = config.pixels_per_unit,

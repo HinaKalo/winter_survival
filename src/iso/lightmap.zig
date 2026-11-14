@@ -36,6 +36,8 @@ pub const LightMap = struct {
     lit: [][3]u8,
     lights: [max_lights]Light = [_]Light{.{}} ** max_lights,
     dirty_all: bool = true,
+    /// rgb 内容变化（或重分配）时自增；模型渲染据此判断是否重建顶点缓冲
+    rgb_gen: u32 = 0,
     last_opacity_version: u32 = 0,
     last_vis_ver: u32 = 0,
     last_exp_ver: u32 = 0,
@@ -71,6 +73,7 @@ pub const LightMap = struct {
         self.w = w;
         self.h = h;
         self.dirty_all = true;
+        self.rgb_gen +%= 1;
     }
 
     pub fn add(self: *LightMap, l: Light) u32 {
@@ -221,6 +224,7 @@ pub const LightMap = struct {
             }
         }
 
+        if (changed > 0) self.rgb_gen +%= 1;
         self.dirty_all = false;
         self.last_opacity_version = map.opacity_version;
         self.last_vis_ver = vis_ver;

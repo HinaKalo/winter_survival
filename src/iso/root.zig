@@ -8,6 +8,7 @@ pub const lightmap = @import("lightmap.zig");
 pub const tilemesh = @import("tilemesh.zig");
 pub const overlay = @import("overlay.zig");
 pub const world = @import("world.zig");
+pub const model = @import("model.zig");
 
 // 图形层 / 引擎胶水 / Lua
 pub const render = @import("render.zig");

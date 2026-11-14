@@ -30,6 +30,8 @@ pub const Entity = struct {
     visible: bool = true,
     lit: bool = true,
     pickable: bool = true,
+    /// 幽灵：不可拾取，绘制为穿墙剪影（始终在最上层）
+    ghost: bool = false,
     pos: Vec3 = Vec3.zero, // 脚底
     size: Vec2 = Vec2.new(1, 1.5),
     sheet: u32 = 0,
@@ -200,7 +202,7 @@ pub const World = struct {
         var buf: [256]Candidate = undefined;
 
         for (self.entities.items) |e| {
-            if (!e.alive or !e.visible or !e.pickable) continue;
+            if (!e.alive or !e.visible or !e.pickable or e.ghost) continue;
             if (e.size.x <= 0 or e.size.y <= 0) continue;
             const t = e.pos.sub(ray.origin).dot(normal) / denom;
             if (!std.math.isFinite(t) or t < 0) continue;
