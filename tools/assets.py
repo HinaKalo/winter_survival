@@ -731,6 +731,17 @@ def run_checks(root: Path) -> list:
         elif kinds[i] != want:
             errs.append("%s:%d: audio.%s(%r): id is kind %s" % (rel, n, fn, i, kinds[i]))
     groups.append(("lua audio ids", errs, warns))
+
+    errs, warns = [], []
+    fonts_cfg_path = root / "assets_src" / "fonts.json"
+    if fonts_cfg_path.is_file():
+        try:
+            import bake_font as _bf
+            fcfg = json.loads(fonts_cfg_path.read_text(encoding="utf-8"))
+            errs.extend(_bf.check_fonts(fcfg, root))
+        except Exception as ex:
+            errs.append(f"font check failed: {ex}")
+    groups.append(("fonts", errs, warns))
     return groups
 
 

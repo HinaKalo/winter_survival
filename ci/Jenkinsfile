@@ -62,6 +62,16 @@ pipeline {
             @echo on
             python ci\\smoke.py --exe zig-out\\bin\\winter_survival.exe --title "Thirty Below" --cwd . --seconds 6 --shot-at 3 --shot reports\\windows\\shot.png --log reports\\windows\\game.log || exit /b 1
           '''
+          // Rolling desktop drop for manual play: only reached when every step above passed.
+          // Delete the previous copy (saves included), then place the new exe + assets.
+          // The game resolves assets/ and saves/ relative to its cwd, so double-clicking the exe works.
+          // If the old copy is locked (game still running), mark UNSTABLE instead of failing the build.
+          catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+            bat '''
+              @echo on
+              powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $d = Join-Path ([Environment]::GetFolderPath('Desktop')) 'ThirtyBelow'; if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }; New-Item -ItemType Directory -Path $d | Out-Null; Copy-Item -LiteralPath 'zig-out\\bin\\winter_survival.exe' -Destination $d; Copy-Item -LiteralPath 'assets' -Destination $d -Recurse; Set-Content -LiteralPath (Join-Path $d 'BUILD.txt') -Value ('Jenkins build ' + $env:BUILD_NUMBER + ' at ' + (Get-Date -Format s)); Write-Host ('desktop drop: ' + $d)" || exit /b 1
+            '''
+          }
         }
       }
       post {

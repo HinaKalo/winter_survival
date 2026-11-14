@@ -4,6 +4,7 @@
   "art": [
     {"name": "hero", "dest": "assets/sprites/hero.png", "size": [128, 192], "frame": [32, 48], "source": "placeholder"},
     {"name": "slime", "dest": "assets/sprites/slime.png", "size": [128, 32], "frame": [32, 32], "source": "placeholder"},
-    {"name": "tiles", "dest": "assets/textures/tiles.png", "size": [256, 128], "frame": [32, 32], "source": "placeholder"}
+    {"name": "tiles", "dest": "assets/textures/tiles.png", "size": [256, 128], "frame": [32, 32], "source": "placeholder"},
+    {"name": "skin", "dest": "assets/ui/skin.png", "size": [128, 128], "frame": [16, 16], "source": "manual"}
   ]
 }

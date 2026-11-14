@@ -1,0 +1,2 @@
+-- luatest entry script: intentionally empty (no _init/_update/_draw).
+-- tests/lua/runner.lua drives all test_*.lua suites via _probe.

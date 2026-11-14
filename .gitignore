@@ -4,3 +4,4 @@ zig-pkg/
 reports/
 __pycache__/
 out/
+saves/

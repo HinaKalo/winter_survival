@@ -7,5 +7,6 @@ pub const world = @import("world.zig");
 // 图形层 / 引擎胶水 / Lua
 pub const render = @import("render.zig");
 pub const engine = @import("engine.zig");
+pub const vm = @import("vm.zig");
 pub const script_host = @import("script_host.zig");
 pub const lua_api = @import("lua_api.zig");

@@ -13,6 +13,8 @@ const papp = delve.platform.app;
 const binder = delve.scripting.binder;
 const lua_util = delve.scripting.lua;
 const modules = delve.modules;
+const gamepad = @import("gamepad.zig");
+const pad_logic = @import("pad_logic.zig");
 
 const Reg = binder.Registry(.{ .entries = &[_]binder.BoundType{} });
 const ignore_fns = [_][:0]const u8{ "bind", "register", "result", "startWatchdog", "stopWatchdog" };
@@ -41,6 +43,7 @@ var tap_n: usize = 0;
 pub fn register(cfg: Config) !void {
     script_path = cfg.script;
     active = true;
+    gamepad.setAllowHardware(false);
     try modules.registerModule(.{
         .name = "kit_probe",
         .priority = -80,
@@ -120,7 +123,8 @@ fn loadProbe(lua: *lua_util.Lua) void {
 
 fn onTick(dt: f32) void {
     if (finished) return;
-    const lua = lua_util.getLua();
+    if (!iso.vm.ready()) return;
+    const lua = iso.vm.get();
     _ = wd_ticks.fetchAdd(1, .monotonic);
     if (!loaded) {
         loadProbe(lua);
@@ -196,6 +200,18 @@ pub fn click(button: i64) void {
     const b = buttonOf(button) orelse return;
     input.onMouseDown(b);
     input.onMouseUp(b); // pressed 在本帧 post_draw 才清，just_pressed 当帧可见
+}
+
+pub fn pad_button(b: i64, down: bool) void {
+    const u = std.math.cast(u8, b) orelse return;
+    const btn = std.enums.fromInt(pad_logic.Button, u) orelse return;
+    gamepad.injectButton(btn, down);
+}
+
+pub fn pad_axis(a: i64, v: f32) void {
+    const u = std.math.cast(u8, a) orelse return;
+    const ax = std.enums.fromInt(pad_logic.Axis, u) orelse return;
+    gamepad.injectAxis(ax, v);
 }
 
 pub fn check(name: [*:0]const u8, ok: bool) void {

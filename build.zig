@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
     });
     iso_mod.addImport("delve", delve_mod);
 
-    // kit 模块（音频 + 探针）
+    // kit 模块（音频 + 探针 + UI + 输入 + 存档）
     const kit_mod = b.addModule("kit", .{
         .root_source_file = b.path("src/kit/root.zig"),
         .target = target,
@@ -33,6 +33,7 @@ pub fn build(b: *std.Build) void {
     });
     kit_mod.addImport("delve", delve_mod);
     kit_mod.addImport("iso", iso_mod);
+    kit_mod.addImport("zlua", delve_mod.import_table.get("zlua").?);
 
     // 游戏可执行文件
     const exe_mod = b.createModule(.{
@@ -69,6 +70,14 @@ pub fn build(b: *std.Build) void {
     if (!probe_audio) probe_cmd.addArg("--no-audio");
     const probe_step = b.step("probe", "Run the headless CI probe (-Dprobe=FILE, -Dprobe-audio=false)");
     probe_step.dependOn(&probe_cmd.step);
+
+    // luatest：无窗口 Lua 单元测试（--script tests/lua/main.lua --probe tests/lua/runner.lua --no-audio）
+    const luatest_cmd = b.addRunArtifact(exe);
+    luatest_cmd.setCwd(b.path("."));
+    luatest_cmd.step.dependOn(b.getInstallStep());
+    luatest_cmd.addArgs(&.{ "--script", "tests/lua/main.lua", "--probe", "tests/lua/runner.lua", "--no-audio" });
+    const luatest_step = b.step("luatest", "Run Lua unit tests in headless mode");
+    luatest_step.dependOn(&luatest_cmd.step);
 
     // test：纯逻辑单元测试根 src/iso/tests.zig
     const test_mod = b.createModule(.{

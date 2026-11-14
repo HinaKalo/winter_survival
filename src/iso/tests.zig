@@ -6,4 +6,5 @@ test {
     std.testing.refAllDecls(@import("camera.zig"));
     std.testing.refAllDecls(@import("tilemap.zig"));
     std.testing.refAllDecls(@import("world.zig"));
+    std.testing.refAllDecls(@import("vm.zig"));
 }

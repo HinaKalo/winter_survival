@@ -215,8 +215,8 @@ state = {
 | 里程碑 | 目标 | 主要任务（负责代理） | 验收 |
 |---|---|---|---|
 | **M0 脚手架** | 可构建、可测试的空工程 | `python3 tools/new_game.py winter_survival --dest ../winter_survival --title "Thirty Below" --git`；把计划拆存为"文档索引"中的各文档，补写 `CONTENT.md`、`UI-UX.md`、`ART-AUDIO.md`；git-daemon 导出本仓库并建 Jenkins 任务 `winter_survival`。代码保持脚手架示例，冒烟探针沿用脚手架的 `tests/probe/smoke.lua`，M1 换掉示例场景时一并改写（**已完成，2026-11-14**） | 构建、测试、冒烟探针全过；`timeout 8` 运行无 panic、无 Lua 错误、无泄漏 |
-| **M1 引擎 A + Lua 基础设施** | 能显示三语界面，三种设备能操作，能存档 | ENGINE-PLAN 的 X1、X10–X12、X14–X17（sonnet/haiku）；`core/` 全部模块（sonnet）；`ui/widgets.lua` + `ui/focus.lua` + `core/input.lua` + 改键界面（sonnet）；标题与设置场景（haiku） | 截图里中/英/韩文正确显示；纯键盘、纯鼠标、纯手柄都能从标题进设置、改语言、改键并保存；内存浸泡探针通过 |
-| **M2 引擎 B + 地图表现** | 能把模板变成带光照和视野的等距场景 | X2–X9、X13、X18（sonnet/haiku）；`view/mapbuild.lua`、`view/actors.lua`、`view/facing.lua`、`view/lightfov.lua`（sonnet）；最终尺寸的占位美术（haiku） | 截图量得菱形 128×64、人物 64×96；64×64 带墙地图无 quad 超限警告；夜间光照、视锥覆盖层、战争迷雾可见 |
+| **M1 引擎 A + Lua 基础设施** | 能显示三语界面，三种设备能操作，能存档 | ENGINE-PLAN 的 X1、X10–X12、X14–X17（sonnet/haiku）；`core/` 全部模块（sonnet）；`ui/widgets.lua` + `ui/focus.lua` + `core/input.lua` + 改键界面（sonnet）；标题与设置场景（haiku）（**已完成，2026-11-14**；验收时用 Xvfb 截图发现并修复了 UI 贴图上下颠倒和绘制段串纹理两个问题） | 截图里中/英/韩文正确显示；纯键盘、纯鼠标、纯手柄都能从标题进设置、改语言、改键并保存；内存浸泡探针通过 |
+| **M2 引擎 B + 地图表现** | 能把模板变成带光照和视野的等距场景 | X2–X9、X13、X18（sonnet/haiku）；`view/mapbuild.lua`、`view/actors.lua`、`view/facing.lua`、`view/lightfov.lua`（sonnet）；最终尺寸的占位美术（haiku）；正式美术试点：色卡、1 名角色全套精灵表、约 12 个地块格、约 6 个 genai 规格（详见 `M2-PLAN.md`） | 截图量得菱形 128×64、人物 64×96；64×64 带墙地图无 quad 超限警告；夜间光照、视锥覆盖层、战争迷雾可见；用户确认美术试点风格 |
 | **M3 模拟核心** | 无画面跑完 30 天 | `sim/` 的时钟、命令、角色、需求、伤病、物品、制作、科技、家园温湿度电力、天气寒潮（sonnet）；`data/` 首批内容表（haiku）；`sim/bot.lua` 与 `zig build balance`（sonnet） | `luatest` 全过；机器人跑完 30 天无报错；同种子两次结果逐字节相同；存读档往返后继续跑结果一致 |
 | **M4 家园可玩** | 垂直切片一：在家过 3 天 | `scenes/home.lua`、选人与寻路与直接移动、交互与任务队列、`ai/home_tasks.lua`、HUD、背包/制作/科技界面、清理瓦砾与挖掘、黄昏与黎明界面（sonnet 为主） | 三种输入的"白天"探针通过；能清理房间、修好加热器、做饭、睡觉，室温随操作变化 |
 | **M5 大地图、世界生成、交易** | 能出门、能换东西 | `sim/worldgen.lua`（预算制）、`sim/locations.lua`、`scenes/worldmap.lua`、`scenes/trade.lua`、`sim/trade.lua`、上门商贩（sonnet）；6 个地点原型的模板（haiku） | 100 个种子的每幕资源总量都在 ±10% 内；白天能去交易点完成一笔交换，声望差时被赶走 |
@@ -225,7 +225,7 @@ state = {
 | **M8 叙事引擎** | 世界会记账 | `sim/` 的 facts、deeds、cond、effects、reactors、psyche、households、rumor、story、director、lint；开发面板；首批 40 个片段和三族规则（sonnet；主代理亲审设计与样例） | `lint.run()` 无错；剧本化测试：偷有人家 → 3 天内出现后续 → 角色反应因价值观而异 → 归还后心理回升；片段"为何未触发"可在面板查看 |
 | **M9 哨站线与结局** | 一局能打完 | `sim/militia.lua`、哨站地点与任务、四类结局与逐角色尾声、局外进度（sonnet） | 机器人能分别达成四类结局；尾声文本正确引用本局发生过的事 |
 | **M10 内容与平衡** | 内容量和数值到位 | 18 个地点原型 × 2–3 套模板、片段池约 80 个（§10.6）、全部配方与科技、10 条三段式角色线（haiku 铺量，sonnet 审逻辑）；数值调优 | §4.7 的平衡目标全部达标；无从未触发的片段 |
-| **M11 正式美术与音频** | 换掉占位 | 色卡、地块、人物生成器、道具、图标、头像、UI 皮肤、音频清单（与 M2–M10 并行） | `assets.py check` 全过；主代理逐场景截图检查辨识度：人物与地面、可交互物与背景、敌我区分 |
+| **M11 正式美术与音频** | 换掉占位 | M2 试点定风格后，按资产清单一次写齐全部规格、一次批量生成，从 M3 起并行；M11 负责补缺、替换与评审：地块、人物、道具、图标、头像、UI 皮肤、音频清单 | `assets.py check` 全过；主代理逐场景截图检查辨识度：人物与地面、可交互物与背景、敌我区分 |
 | **M12 打磨与发布** | 可交付 | 新手引导提示、难度修正项、温和叙述开关、性能、三语复查、Windows 构建 | Windows 运行器上冒烟与截图通过；连续 2 小时运行内存稳定；三语无缺字、无溢出 |
 
 M4 和 M6 结束时各有一次给用户试玩的检查点。

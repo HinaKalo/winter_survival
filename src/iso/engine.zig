@@ -24,6 +24,8 @@ pub const Config = struct {
     map_w: u32 = 32,
     map_h: u32 = 32,
     clear_color: colors.Color = colors.Color.newBytes(40, 48, 72, 255),
+    max_dt: f32 = 0.1,
+    dev_hot_reload: bool = false,
 };
 
 pub var config: Config = .{};
@@ -79,7 +81,8 @@ fn viewportH() f32 {
     return @floatFromInt(@max(papp.getHeight(), 1));
 }
 
-fn onTick(dt: f32) void {
+fn onTick(raw_dt: f32) void {
+    const dt = @min(raw_dt, config.max_dt);
     world.tick(dt, &map, camera.yaw);
     if (follow_entity != 0) {
         if (world.get(follow_entity)) |e| {

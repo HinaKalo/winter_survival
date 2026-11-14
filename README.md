@@ -8,9 +8,9 @@
 
 | 项 | 状态 |
 |---|---|
-| 阶段 | M0 完成（2026-11-14）：工程生成、设计文档、Jenkins 任务。代码仍是脚手架的示例场景，只保证构建与冒烟通过 |
-| 下一步 | M1：引擎扩展 A（自建 Lua VM、三语文本、UI、手柄、存档）+ Lua 基础设施，见 `docs/PLAN.md §6` |
-| CI | Jenkins 任务 `winter_survival`（每 2 分钟轮询本机 git daemon），见 `docs/CI-PLAN.md` |
+| 阶段 | M1 完成（2026-11-14）：自建 Lua VM、三语字体与 UI、键鼠/手柄输入与改键、存档、`core/` 基础设施、标题与设置界面。地图仍是脚手架示例 |
+| 下一步 | M2：引擎扩展 B + 地图表现 + 美术试点，见 `docs/M2-PLAN.md` |
+| CI | Jenkins 任务 `winter_survival`（每 2 分钟轮询本机 git daemon），见 `docs/CI-PLAN.md`。构建全部通过后，Windows 运行器桌面的 `ThirtyBelow\` 目录会被删掉重放为最新版本（含 `BUILD.txt`） |
 
 ## 设计文档
 

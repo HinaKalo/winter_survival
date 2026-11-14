@@ -1,0 +1,20 @@
+{
+  "i18n_dir": "assets/i18n",
+  "out_dir": "assets/fonts",
+  "fallback_cp": 63,
+  "extra_chars": "…°×−＋‹›▾✔✘⚠⏸☰，。、！？；：）」』》…（「『《",
+  "sources": [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"
+  ],
+  "fonts": [
+    { "name": "ui_14", "px": 14 },
+    { "name": "ui_16", "px": 16 },
+    { "name": "ui_18", "px": 18 },
+    { "name": "ui_20", "px": 20 },
+    { "name": "ui_24", "px": 24 },
+    { "name": "ui_30", "px": 30 }
+  ]
+}
