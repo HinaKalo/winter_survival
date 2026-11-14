@@ -1,0 +1,156 @@
+# GitHub Actions CI (parallel, hosted runners). Complements the local Jenkins job:
+#   - here: headless tests split into parallel Windows jobs + a downloadable playable build
+#   - Jenkins (local GPU runner): real-window smoke/screenshots and the desktop drop
+# Layout mirrors the local one: $GITHUB_WORKSPACE/winter_survival + $GITHUB_WORKSPACE/delve-framework
+# (build.zig.zon depends on ../delve-framework), pinned by ci/delve.rev, patched like ci/setup_delve.sh.
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZIG_VERSION: 0.16.0
+  DELVE_REPO: HinaKalo/delve-framework
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      probes: ${{ steps.p.outputs.probes }}
+      delve_rev: ${{ steps.p.outputs.delve_rev }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        run: |
+          probes=$(ls tests/probe/*.lua | xargs -n1 basename | sed 's/\.lua$//' | python3 -c 'import json,sys;print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+          echo "probes=$probes" >> "$GITHUB_OUTPUT"
+          echo "delve_rev=$(tr -d '[:space:]' < ci/delve.rev)" >> "$GITHUB_OUTPUT"
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tools/assets.py check
+      - run: python3 -m unittest discover -s tests/tools -t .
+
+  luatest:
+    needs: plan
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: winter_survival
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: winter_survival
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DELVE_REPO }}
+          ref: ${{ needs.plan.outputs.delve_rev }}
+          path: delve-framework
+      - name: patch delve (zig 0.16)
+        run: sed -i 's/GeneralPurposeAllocator(/DebugAllocator(/g' ../delve-framework/src/framework/utils/quakemap.zig
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: python3 alias (build.zig calls python3)
+        run: command -v python3 >/dev/null || cp "$(command -v python)" "$(dirname "$(command -v python)")/python3.exe"; python3 --version
+      - name: zig build test
+        run: zig build test -Dbackend=headless --summary all
+      - name: luatest
+        run: zig build luatest -Dbackend=headless 2>&1 | tee luatest.log; exit ${PIPESTATUS[0]}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-luatest
+          path: winter_survival/luatest.log
+          if-no-files-found: ignore
+
+  probe:
+    needs: plan
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        probe: ${{ fromJson(needs.plan.outputs.probes) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: winter_survival
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: winter_survival
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DELVE_REPO }}
+          ref: ${{ needs.plan.outputs.delve_rev }}
+          path: delve-framework
+      - name: patch delve (zig 0.16)
+        run: sed -i 's/GeneralPurposeAllocator(/DebugAllocator(/g' ../delve-framework/src/framework/utils/quakemap.zig
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: python3 alias (build.zig calls python3)
+        run: command -v python3 >/dev/null || cp "$(command -v python)" "$(dirname "$(command -v python)")/python3.exe"; python3 --version
+      - name: probe ${{ matrix.probe }}
+        run: |
+          zig build probe -Dbackend=headless -Dprobe-audio=false -Dprobe=tests/probe/${{ matrix.probe }}.lua 2>&1 | tee probe.log
+          rc=${PIPESTATUS[0]}
+          grep -a "PROBE FAIL" probe.log || true
+          grep -a "PROBE SUMMARY" probe.log || true
+          exit $rc
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-probe-${{ matrix.probe }}
+          path: winter_survival/probe.log
+          if-no-files-found: ignore
+
+  build:
+    needs: plan
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: winter_survival
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: winter_survival
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DELVE_REPO }}
+          ref: ${{ needs.plan.outputs.delve_rev }}
+          path: delve-framework
+      - name: patch delve (zig 0.16)
+        run: sed -i 's/GeneralPurposeAllocator(/DebugAllocator(/g' ../delve-framework/src/framework/utils/quakemap.zig
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: python3 alias (build.zig calls python3)
+        run: command -v python3 >/dev/null || cp "$(command -v python)" "$(dirname "$(command -v python)")/python3.exe"; python3 --version
+      - name: build (sokol, release)
+        run: zig build -Dbackend=sokol -Doptimize=ReleaseSafe
+      - name: package
+        run: |
+          mkdir -p pkg/ThirtyBelow
+          cp zig-out/bin/winter_survival.exe pkg/ThirtyBelow/
+          cp -r assets pkg/ThirtyBelow/
+          echo "commit ${GITHUB_SHA} run ${GITHUB_RUN_NUMBER}" > pkg/ThirtyBelow/BUILD.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThirtyBelow-windows-${{ github.sha }}
+          path: winter_survival/pkg
+          retention-days: 14
