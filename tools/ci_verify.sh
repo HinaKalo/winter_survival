@@ -35,6 +35,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# make --shots absolute before any cd
+if [ -n "$SHOTS_FILE" ]; then
+  case "$SHOTS_FILE" in /*) ;; *) SHOTS_FILE="$PWD/$SHOTS_FILE" ;; esac
+fi
+
 GIT_COMMON="$(git rev-parse --git-common-dir)"
 GIT_COMMON="$(cd "$GIT_COMMON" && pwd)"
 
@@ -95,7 +100,7 @@ if [ -n "$BUILD" ]; then
   ( umask 077; printf 'user = "%s"\n' "$(cat "$AUTH_FILE")" > "$CFG" )
   ZIP="$TMPD/archive.zip"
   if curl -sf --config "$CFG" -o "$ZIP" "$JENKINS_URL/job/$JOB/$BUILD/artifact/*zip*/archive.zip"; then
-    python3 -I - "$ZIP" "$OUT" <<'PY'
+    if ! python3 -I - "$ZIP" "$OUT" <<'PY'
 import sys, zipfile, os
 zp, out = sys.argv[1:3]
 with zipfile.ZipFile(zp) as z:
@@ -115,6 +120,9 @@ with zipfile.ZipFile(zp) as z:
         with z.open(m) as src, open(dest, "wb") as dst:
             dst.write(src.read())
 PY
+    then
+      echo "ci_verify: WARNING: could not unpack the artifact archive for build #$BUILD (continuing to summary)" >&2
+    fi
   else
     echo "ci_verify: no artifacts downloaded for build #$BUILD"
   fi

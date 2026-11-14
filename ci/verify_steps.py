@@ -37,7 +37,9 @@ def select_probes(spec, profile, root="."):
     found = []
     for p in pats:
         hits = sorted(glob.glob(os.path.join(root, p)))
-        if not hits and not any(c in p for c in "*?["):
+        if not hits:
+            if any(c in p for c in "*?["):
+                raise ValueError("probe pattern matches no files: %s" % p)
             hits = [os.path.join(root, p)]  # explicit file: let the step fail loudly if missing
         for h in hits:
             rel = os.path.relpath(h, root).replace(os.sep, "/")
@@ -45,6 +47,8 @@ def select_probes(spec, profile, root="."):
                 found.append(rel)
     if profile == "quick":
         found = [f for f in found if os.path.basename(f) not in QUICK_SKIP]
+    if not found:
+        raise ValueError("no probes selected (spec=%r, profile=%s)" % (spec or DEFAULT_PROBES, profile))
     return found
 
 
@@ -102,7 +106,13 @@ def main(argv=None):
     else:
         print("NOTE: build.zig has no luatest step, skipped")
 
-    probes = select_probes(a.probes, a.profile)
+    try:
+        probes = select_probes(a.probes, a.profile)
+    except ValueError as e:
+        print("VERIFY FAILED: probe selection: %s" % e)
+        write_step_junit(os.path.join(a.log_dir, "probe_selection.xml"), "probe_selection",
+                         "select probes", 0.0, 1, str(e))
+        return 1
     print("probes (%s): %s" % (a.profile, ", ".join(probes) or "(none)"), flush=True)
     for p in probes:
         key = "probe_" + os.path.splitext(os.path.basename(p))[0]

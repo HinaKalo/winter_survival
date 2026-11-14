@@ -78,9 +78,9 @@ def parse_shots(text):
         name = safe_name(parts[0])
         if not parts[0].strip():
             raise ValueError("line %d: empty shot name" % i)
-        if name in seen:
+        if name.lower() in seen:
             raise ValueError("line %d: duplicate shot name %r" % (i, name))
-        seen.add(name)
+        seen.add(name.lower())
         env_field = parts[1] if len(parts) > 1 else ""
         args_field = parts[2] if len(parts) > 2 else ""
         try:
@@ -349,6 +349,13 @@ def report(results, log_text):
     return failed
 
 
+_XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
+def _xml_safe(s):
+    return _XML_BAD.sub("", s)
+
+
 def write_shots_junit(path, cases):
     """cases: list of (name, seconds, error_or_None)."""
     fails = sum(1 for c in cases if c[2])
@@ -358,8 +365,8 @@ def write_shots_junit(path, cases):
     for name, secs, err in cases:
         tc = ET.SubElement(suite, "testcase", classname="shots", name=name, time="%.2f" % secs)
         if err:
-            f = ET.SubElement(tc, "failure", message=err.splitlines()[0][:200] if err else "failed")
-            f.text = err[:4000]
+            f = ET.SubElement(tc, "failure", message=_xml_safe(err.splitlines()[0][:200]) if err.strip() else "failed")
+            f.text = _xml_safe(err[:4000])
     d = os.path.dirname(os.path.abspath(path))
     os.makedirs(d, exist_ok=True)
     ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)

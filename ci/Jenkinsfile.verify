@@ -28,8 +28,9 @@ pipeline {
           sh 'git log -1 --format="testing %H %s" || true'
           sh 'mkdir -p reports/linux'
           // assets.py check already includes the i18n group (tools/i18n_check.py).
-          sh 'python3 tools/assets.py check --junit reports/linux/assets.xml'
-          sh 'python3 ci/run_pytests.py --junit reports/linux/unit_py.xml'
+          // Each check is non-fatal for the pipeline flow (build ends FAILURE) so the stash and Windows stage still run.
+          catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') { sh 'python3 tools/assets.py check --junit reports/linux/assets.xml' }
+          catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') { sh 'python3 ci/run_pytests.py --junit reports/linux/unit_py.xml' }
         }
         stash name: 'src', includes: 'winter_survival/**,delve-framework/**', excludes: '**/.git/**,**/.zig-cache/**,**/zig-out/**,**/zig-pkg/**', useDefaultExcludes: false
       }
