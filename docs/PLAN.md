@@ -139,7 +139,7 @@ tests/
 
 ```lua
 state = {
-  version = 1, seed = 0, rng = { story = {...}, loot = {...}, combat = {...}, worldgen = {...} },
+  version = 1, seed = 0, rng = { story = {...}, loot = {...}, combat = {...}, worldgen = {...}, health = {...}, weather = {...} },  -- 与 sim/state.lua 的 STREAMS 一致；NARRATIVE §2.9 另列 fx（视觉随机，代码尚无）
   clock   = { day = 1, minute = 360, phase = "day" },          -- phase: day/dusk/night/dawn/ending
   party   = { order = {...}, chars = { [id] = Char } },
   home    = { layout = "ranch_a", rooms = { [id] = Room }, stations = { [id] = Station },
@@ -161,10 +161,10 @@ state = {
 | `sim.step(state, minutes)` | 以 1 游戏分钟为步长推进：时钟、需求、任务、温湿度、电力、疾病、心理衰减 |
 | `sim.command(state, cmd) -> ok, err` | 玩家对模型的**所有**改动都走命令（派活、吃喝、制作、交易、定夜间角色、选片段选项）。场景和机器人用同一套命令 |
 | `sim.advance_phase(state)` | 时段切换：黄昏结算、夜间结算、黎明推进住户/传闻/排期 |
-| `sim.raid_begin(state, loc, squad) -> raid` | 建立副本的临时状态（NPC、容器、门） |
-| `sim.raid_commit(state, raid, result)` | 把战利品、伤亡、行为记录、耗时写回模型 |
-| `sim.raid_autoresolve(state, loc, squad, policy)` | 不进副本的抽象结算，供机器人和批量模拟用，与实际副本共用同一批容器和风险参数 |
-| `bus.on(evt, fn)` / `bus.emit(evt, data)` | 模型向外通知（`char_died`、`storylet_ready`、`snap_warning` 等） |
+| `raid.begin(state, loc_id, squad) -> raid`（`sim/raid.lua`） | 建立副本的临时状态（NPC、容器、门） |
+| `raid.commit(state, raid, result)` | 把战利品、伤亡、行为记录、耗时写回模型 |
+| `raid.autoresolve(state, loc_id, squad, policy) -> result` | 不进副本的抽象结算，供机器人和批量模拟用，与实际副本共用同一批容器和风险参数 |
+| `bus.on(evt, fn)` / `bus.emit(evt, data)` | 模型向外通知（`char_died`、`storylet_ready`、`snap_warning` 等；事件目录见 PARALLEL-PLAN C3） |
 
 副本的实时部分（移动、视线、噪音）必须调用引擎，放在 `scenes/raid.lua` 和 `ai/`；判定公式（被发现的概率、噪音半径、伤害、威吓判定）是 `sim/raid_rules.lua` 里的纯函数，可单测。
 
