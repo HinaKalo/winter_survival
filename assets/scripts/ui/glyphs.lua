@@ -142,6 +142,15 @@ function M.from_binding(device, b)
   elseif device == "mouse" then
     return M.mouse(b.btn)
   elseif device == "pad" then
+    if b.axis then
+      local spec = M.pad(b.axis)
+      spec.dir = b.dir
+      if b.dir then
+        spec.label = string.upper(b.axis) .. " " .. b.dir
+        spec.key = "pad:" .. b.axis .. "_" .. b.dir
+      end
+      return spec
+    end
     local spec = M.pad_button(b.btn)
     if spec then spec.lt = b.lt or false end
     return spec
@@ -294,6 +303,15 @@ local function draw_stick(spec, x, y, size)
   local inner = math.floor((size - 8) * 0.5)
   ui.rect(x + math.floor(size * 0.5 - inner * 0.5), y + math.floor(size * 0.5 - inner * 0.5), inner, inner)
   centered_text(spec.name == "rs" and "R" or "L", x, y, size, size, theme.colors.text, theme.font("s"))
+  if spec.dir then
+    -- direction tick on the matching edge
+    local mid = math.floor(size / 2)
+    theme.set_color(theme.colors.accent)
+    if spec.dir == "up" then ui.rect(x + mid - 3, y, 6, 3)
+    elseif spec.dir == "down" then ui.rect(x + mid - 3, y + size - 3, 6, 3)
+    elseif spec.dir == "left" then ui.rect(x, y + mid - 3, 3, 6)
+    elseif spec.dir == "right" then ui.rect(x + size - 3, y + mid - 3, 3, 6) end
+  end
 end
 
 local function draw_start_back(spec, x, y, size)
