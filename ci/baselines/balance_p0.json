@@ -1,0 +1,34 @@
+{
+  "days": 30,
+  "runs": 1,
+  "avg_alive": 4.0000,
+  "avg_day": 30.0000,
+  "note": "M3 reference bot and start kit are tuning placeholders, not final balance",
+  "placeholder_expedition": true,
+  "results": [
+  {
+    "seed": 20261114,
+    "day": 30,
+    "phase": "ending",
+    "alive": 4,
+    "deaths": 0,
+    "food_days": 2.4500,
+    "fuel_days": 96.8651,
+    "checksum": "bf553e5f",
+    "errors": 0,
+    "min_food": 40.5833,
+    "min_water": 43.7500,
+    "min_temp": 63.9446,
+    "worst_room_temp": -42.2912,
+    "best_room_temp": 14.5812,
+    "meals": 497,
+    "crafts": 109,
+    "researches": 18,
+    "expeditions": 28,
+    "dead": []
+  }
+  ],
+  "determinism": { "ok": true, "a": "bf553e5f", "b": "bf553e5f" },
+  "errors": [
+  ]
+}
