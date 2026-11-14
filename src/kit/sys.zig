@@ -279,9 +279,12 @@ fn l_listFiles(lua: *zlua.Lua) i32 {
     if (!file_paths.validDir(root)) return badDir(lua);
     const suffix = lua.toString(2) catch "";
     const io = delve.io.getIo();
-    var dir = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch {
-        lua.createTable(0, 0);
-        return 1;
+    var dir = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound) {
+            lua.createTable(0, 0); // missing directory: empty list (P0-PLAN 3.0)
+            return 1;
+        }
+        return ioError(lua);
     };
     defer dir.close(io);
     const alloc = mem.getAllocator();
@@ -290,20 +293,18 @@ fn l_listFiles(lua: *zlua.Lua) i32 {
         for (paths.items) |path| alloc.free(path);
         paths.deinit(alloc);
     }
-    var walker = dir.walk(alloc) catch {
-        lua.createTable(0, 0);
-        return 1;
-    };
+    var walker = dir.walk(alloc) catch return ioError(lua);
     defer walker.deinit();
-    while (walker.next(io) catch null) |entry| {
+    while (true) {
+        const entry = (walker.next(io) catch return ioError(lua)) orelse break;
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, suffix)) continue;
-        const path = std.fmt.allocPrint(alloc, "{s}/{s}", .{ root, entry.path }) catch continue;
+        const path = std.fmt.allocPrint(alloc, "{s}/{s}", .{ root, entry.path }) catch return ioError(lua);
         for (path) |*c| if (c.* == '\\') {
             c.* = '/';
         };
         paths.append(alloc, path) catch {
             alloc.free(path);
-            continue;
+            return ioError(lua);
         };
     }
     file_paths.sort(paths.items);
@@ -313,6 +314,12 @@ fn l_listFiles(lua: *zlua.Lua) i32 {
         lua.rawSetIndex(-2, @intCast(i + 1));
     }
     return 1;
+}
+
+fn ioError(lua: *zlua.Lua) i32 {
+    lua.pushNil();
+    _ = lua.pushString("io_error");
+    return 2;
 }
 
 fn badDir(lua: *zlua.Lua) i32 {
