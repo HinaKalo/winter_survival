@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pilot Art Generator (A2 & A3): generates wasteland-palette char_marcus.png (512x768) and tiles.png (512x512)."""
 from pathlib import Path
+import importlib.util
 import json
 import random
 from PIL import Image, ImageDraw
@@ -185,9 +186,18 @@ def fill_cell(sheet: Image.Image, idx: int, draw_fn):
     sheet.paste(cell, (col * 64, row * 64))
 
 
+def placeholder_atlas() -> Image.Image:
+    """The full P1 placeholder atlas (tools/gen_m2_placeholders.py); pilot cells are pasted over it."""
+    spec = importlib.util.spec_from_file_location("gen_m2_placeholders", ROOT / "tools" / "gen_m2_placeholders.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.make_tiles().convert("RGBA")
+
+
 def make_tiles(pal: dict) -> Image.Image:
     rng = random.Random(20260514)
-    sheet = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+    # Start from the complete placeholder atlas so cells the pilot does not draw stay visible.
+    sheet = placeholder_atlas()
 
     def solid_noise(base_col, speckles):
         def _fn(cell, d):
@@ -302,7 +312,7 @@ def make_tiles(pal: dict) -> Image.Image:
     fill_cell(sheet, 60, draw_brick)
     fill_cell(sheet, 61, draw_planks(pal["wood"][1], pal["wood"][0], pal["wood"][2]))
 
-    # Keep 62, 63 transparent for decals
+    # Cells the pilot does not draw (41, 53, 56, 62, 63, ...) keep their placeholder art.
     return sheet
 
 

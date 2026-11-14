@@ -89,6 +89,11 @@ pub const IsoCamera = struct {
     viewport_w: f32 = 1,
     viewport_h: f32 = 1,
 
+    /// 广告牌精灵的竖直拉伸 1/cos(pitch)：渲染与拾取共用，保证命中框与画面一致。
+    pub fn billboardVScale(self: *const IsoCamera) f32 {
+        return 1.0 / @cos(std.math.degreesToRadians(self.safePitch()));
+    }
+
     /// pitch 钳制到 [1,89]（非有限 -> 30），保证 cos(pitch) > 0、forward 非零。
     fn safePitch(self: *const IsoCamera) f32 {
         return std.math.clamp(finiteOr(self.pitch, 30.0), min_pitch, max_pitch);

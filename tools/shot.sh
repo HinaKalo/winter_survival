@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <out.png> [--lang zh|en|ko] [--script path.lua] [--at seconds]" >&2
+  echo "Usage: $0 <out.png> [--lang zh|en|ko] [--scene NAME] [--script path.lua] [--at seconds]" >&2
   exit 2
 fi
 
@@ -11,6 +11,7 @@ shift
 
 LANG_CODE=""
 SCRIPT_PATH=""
+SCENE_NAME=""
 SHOT_AT="3"
 
 while [ $# -gt 0 ]; do
@@ -21,6 +22,10 @@ while [ $# -gt 0 ]; do
       ;;
     --script)
       SCRIPT_PATH="${2:?missing script}"
+      shift 2
+      ;;
+    --scene)
+      SCENE_NAME="${2:?missing scene}"
       shift 2
       ;;
     --at)
@@ -77,6 +82,10 @@ if command -v mise >/dev/null 2>&1; then
   mise exec -- zig build
 else
   zig build
+fi
+
+if [ -n "$SCENE_NAME" ]; then
+  export WS_SCENE="$SCENE_NAME"
 fi
 
 EXE="./zig-out/bin/winter_survival"
