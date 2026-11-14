@@ -339,7 +339,11 @@ local function scenario()
   local kb = kinds_for("keyboard")
   probe.check("hint icons keyboard = key caps", #kb == 4 and kb[1] == "key" and kb[2] == "key" and kb[3] == "key" and kb[4] == "key")
   local pd = kinds_for("pad")
-  probe.check("hint icons pad = a, b, rb, y", pd[1] == "pad_a" and pd[2] == "pad_b" and pd[3] == "pad_rb" and pd[4] == "pad_y")
+  -- P0-3 (P0-PLAN §3.3): ui_page_next moved from RB to RS-down; stick-direction bindings show a stick glyph
+  local _, pd_lay = kinds_for("pad")
+  local g3 = pd_lay.items[3] and pd_lay.items[3].glyph
+  probe.check("hint icons pad = a, b, rs(down), y", pd[1] == "pad_a" and pd[2] == "pad_b" and pd[3] == "pad_rs"
+    and g3 and g3.dir == "down" and pd[4] == "pad_y")
   local ms, mlay = kinds_for("mouse")
   probe.check("hint icons mouse = left, right, then keyboard fallback", ms[1] == "mouse" and ms[2] == "mouse"
     and mlay.items[1].glyph.btn == 0 and mlay.items[2].glyph.btn == 1 and ms[3] == "key" and ms[4] == "key")

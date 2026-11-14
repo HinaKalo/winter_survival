@@ -454,6 +454,17 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 | A1 | `verify_steps.main` 在 zig 不存在 / 没有 `build.zig` 时 `return 2`，不归档 | 不接受：两者是基础设施错误，发生在任何步骤之前，本轮不可能产出报告或夹具 | `test_ci_archive` 注释说明 |
 | A2 | 探针选择失败分支的归档无测试 | 接受（缺测试，实现已覆盖） | `test_ci_archive.test_main_collects_on_probe_selection_error` |
 
+### 9.4 P0-3 验收测试补充裁决（2026-11-14）
+
+| 项 | 裁决 |
+|---|---|
+| dev 键 | 引擎在 dev 模式用 F5 热重载（`src/iso/script_host.zig`），§3.3 的 F5–F10 改为 **F2 F3 F4 F6 F7 F8**（依次 `dev.time_prev/time_next/map_toggle/mode_toggle/roof_toggle/flashlight`）；F5 加入键盘保留键 |
+| 白名单 | `SHARED_DEFAULTS` 增加鼠标右键 = `cancel`/`ui_secondary`（M2 起即同键，§7.1 两处都写右键；U 内悬停物品时为 `ui_secondary`） |
+| 新接口 | `input.update(dt)`（main.lua 每帧在 `scene.update` 前调用）、`input.set_hold_s`、`input.set_dev`、`input.pan_vec`、`input.find_conflicts`、公开 `CTX_CONFLICTS`；详见 `tests/lua/test_input_actions.lua` 文件头 |
+| 测试位置 | 逐动作 × 设备的触发判定在 luatest（模拟设备）与探针 `p0_inputs`（真实注入）两处做，规则共用 `tests/lua/p0_input_cases.lua` |
+| 旧存档绑定 | P0-3 改了默认键，M2 存下的 `settings.sav` 绑定会带回旧冲突。`export_bindings` 写入 `version = input.BINDINGS_VERSION`（2）；无版本或版本 < 2 的绑定不导入（`import_bindings` 返回 `false, "outdated"`），沿用新默认。测试 `test_input_actions.old_saved_bindings_are_not_imported` |
+| 摇杆方向的提示图标 | `ui_page_*` 改到右摇杆后，提示栏手柄图标为摇杆图标：`glyphs` 对 `{ axis, dir }` 绑定返回 `{ kind = "pad_" .. axis, dir = dir }`（如 `pad_rs` + `down`）。PANEL 探针 `panel_widgets` 的 “hint icons pad” 期望相应更新 |
+
 ### 9.5 契约回改（2026-11-14）
 
 依 §9.1 “设计文档优先”（Q1、Q2、Q9、Q16）就地回改了 PARALLEL-PLAN §2 的 C3、C6、C7、C8、C9 与 PLAN §4.4。此后 P0-4 以 PARALLEL-PLAN §2 为准；本文 §3.4 的 C3、C6–C9 段、§7 的 Q1、Q2、Q9、Q16 行与 §8 第 4–7 条里的旧名字已作废。
