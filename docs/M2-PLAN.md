@@ -180,3 +180,18 @@ Xvfb + Mesa 软件渲染，在本机就能截图，不碰用户桌面。像素�
 - **光源统一走 `lightfov`**：`mapbuild.apply(plan, opts)` 接受 `opts.add_light(name, x, z)`，地图里的所有光源都经它创建；地点数据的光源只写 `name`（取 `data/lights.lua` 的条目）和位置，不再硬编码颜色/半径。剖面模式下每个窗格按 ART-AUDIO §3.1 放一个 `window` 光（半径 3，室外环境光 × 0.6），随时间滑块重新着色。
 - 尚未实现的入口（`cursor_free`、`open_wheel` 轮盘）在 `input.lua` 注释里标明“后续里程碑”；`screen` 只标真实存在的入口，`validate()` 检查字符串型 `screen` 指向的动作在该设备上确有绑定。
 - 本次返工由 coder-sonnet 执行，文件所有权临时扩大到 `mapbuild.lua` 的光源部分与 `data/locations/*.lua` 的光源字段。再不过即停止返工，由主代理亲自修复或交用户决策。
+
+## 6. M2-fix（合并后 Codex 审查，2026-11-14）
+
+Codex（gpt-6.1-sol，medium）审查合并到 main 的 M2，结论 FAIL：1 个 P1、5 个 P2。按新流程，主代理先写验收测试并确认为红，编码代理只负责让测试变绿。
+
+| # | 问题 | 裁定 | 验收测试 |
+|---|---|---|---|
+| F1 | 方向移动（`actors.move_dir`）不检查碰撞，会穿墙、穿过关着的门 | 每一步移动前检查目标格可走；被挡时沿另一轴滑动，两轴都被挡则停住。不得冻结正常移动 | `tests/probe/m2_fix.lua` F1 |
+| F2 | `gen_pilot.py` 覆盖了整张图集，41/53/56 号格子变成全透明 | 生成器以完整占位图集为底，只替换试点格子；重新生成并提交 `assets/textures/tiles.png` | `tests/tools/test_m2_fix.py` AtlasCellsTest |
+| F3 | 演示场景在设置像素比例（PPU）之前生成地图和角色，首次进入时尺寸错误 | 相机配置移到 `mapbuild.apply` 与生成角色之前 | `m2_fix.lua` F3 |
+| F4 | `entity_set_size_px` 多乘了一次 cos(pitch) | 改为保存 `wpx/ppu × hpx/ppu`；新增只读绑定 `iso.entity_get_size(id) -> {w, h}` | `m2_fix.lua` F4 |
+| F5 | 拾取用的高度和 V 坐标没有做渲染时的 1/cos(pitch) 拉伸 | 拾取的命中框与 UV 和渲染共用同一个竖直变换 | `m2_fix.lua` F5 |
+| F6 | 文档里的 `--script assets/scripts/scenes/m2_demo.lua` 启动后什么也不显示 | 文档与 `tools/shot.sh` 改用 `WS_SCENE=m2_demo`（shot.sh 增加 `--scene NAME`）；凡文档中出现的 `--script` 入口都必须定义全局 `_init`/`_update` | `test_m2_fix.py` ScriptEntryTest |
+
+完成标准：`m2_fix.lua` 全部检查通过；`python3 -m unittest discover -s tests/tools` 全绿；luatest、`zig build test` 与现有全部探针仍然全绿。
