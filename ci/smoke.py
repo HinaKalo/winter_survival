@@ -11,9 +11,13 @@ Python 3.10+ ; stdlib + Pillow only.
 import argparse
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
+import xml.etree.ElementTree as ET
 
 
 DEFAULT_TITLE = "Thirty Below"
@@ -42,6 +46,56 @@ def window_bbox(rect):
     if r - l < 16 or b - t < 16 or r <= -30000 or b <= -30000:  # -32000 = minimized window
         return None
     return (l, t, r, b)
+
+
+def parse_env_pairs(pairs):
+    """['A=1', 'B=x=y'] -> {'A': '1', 'B': 'x=y'}; raises ValueError on a malformed pair."""
+    out = {}
+    for p in pairs or []:
+        k, sep, v = p.partition("=")
+        if not sep or not k.strip():
+            raise ValueError("bad env pair %r (expected KEY=VAL)" % p)
+        out[k.strip()] = v
+    return out
+
+
+def safe_name(name):
+    """File-system safe shot name."""
+    n = re.sub(r"[^A-Za-z0-9_.-]+", "_", name.strip()).strip("._")
+    return n or "shot"
+
+
+def parse_shots(text):
+    """Parse a shots file. One shot per line: `name|KEY=VAL KEY2=VAL2|extra game args`.
+    Blank lines and lines starting with # are ignored; the env and args fields are optional.
+    Returns a list of dicts {name, env, args}. Raises ValueError on a malformed line or duplicate name."""
+    shots, seen = [], set()
+    for i, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|", 2)
+        name = safe_name(parts[0])
+        if not parts[0].strip():
+            raise ValueError("line %d: empty shot name" % i)
+        if name.lower() in seen:
+            raise ValueError("line %d: duplicate shot name %r" % (i, name))
+        seen.add(name.lower())
+        env_field = parts[1] if len(parts) > 1 else ""
+        args_field = parts[2] if len(parts) > 2 else ""
+        try:
+            env = parse_env_pairs(shlex.split(env_field))
+        except ValueError as e:
+            raise ValueError("line %d: %s" % (i, e))
+        shots.append({"name": name, "env": env, "args": shlex.split(args_field)})
+    return shots
+
+
+def write_settings(save_dir, lang):
+    """Pre-write settings.sav so the game starts in `lang` (same format as core/save.lua)."""
+    os.makedirs(save_dir, exist_ok=True)
+    with open(os.path.join(save_dir, "settings.sav"), "w", encoding="utf-8", newline="\n") as f:
+        f.write('return { version = 1, lang = "%s" }\n' % lang)
 
 
 # ---------------------------------------------------------------- screenshot back ends
@@ -193,9 +247,10 @@ def take_screenshot(path, title=DEFAULT_TITLE):
 
 
 # ---------------------------------------------------------------- main run
-def run_game(exe, cwd, seconds, shot_at, shot, log, timeout, title=DEFAULT_TITLE):
+def run_game(exe, cwd, seconds, shot_at, shot, log, timeout, title=DEFAULT_TITLE, extra_env=None, game_args=None):
     """Returns (launch_failure_or_None, exit_code_or_None, screenshot_error_or_None, elapsed)."""
     env = dict(os.environ)
+    env.update(extra_env or {})
     env["ISO_AUTOQUIT"] = str(seconds)
     t0 = time.time()
     shot_err = "screenshot not attempted (process did not run long enough)"
@@ -204,7 +259,7 @@ def run_game(exe, cwd, seconds, shot_at, shot, log, timeout, title=DEFAULT_TITLE
         os.makedirs(d)
     with open(log, "wb") as lf:
         try:
-            proc = subprocess.Popen([exe], cwd=cwd, env=env, stdout=lf, stderr=subprocess.STDOUT)
+            proc = subprocess.Popen([exe] + list(game_args or []), cwd=cwd, env=env, stdout=lf, stderr=subprocess.STDOUT)
         except (OSError, ValueError) as e:
             return "cannot launch %s: %s" % (exe, e), None, "game did not start", time.time() - t0
         shot_done = False
@@ -234,30 +289,55 @@ def build_parser():
                     help="window title to screenshot on Windows (default: %(default)r)")
     ap.add_argument("--seconds", type=float, default=6)
     ap.add_argument("--shot-at", type=float, default=3)
-    ap.add_argument("--shot", required=True)
-    ap.add_argument("--log", required=True)
+    ap.add_argument("--shot", help="screenshot path (single mode)")
+    ap.add_argument("--log", help="game log path (single mode)")
     ap.add_argument("--timeout", type=float, default=60)
+    ap.add_argument("--env", action="append", default=[], metavar="KEY=VAL",
+                    help="extra environment variable for the game (repeatable)")
+    ap.add_argument("--save-dir", help="pass --save-dir DIR to the game (isolated saves)")
+    ap.add_argument("--lang", help="pre-write DIR/settings.sav with this language (needs --save-dir, "
+                                   "or a temp dir is used)")
+    ap.add_argument("--args", default="", help="extra game arguments, shell-style string")
+    ap.add_argument("--shots-file", help="batch mode: file with lines `name|KEY=VAL ...|extra args`; "
+                                         "needs --out-dir (writes <name>.png and <name>.log there)")
+    ap.add_argument("--out-dir", help="batch mode output directory")
+    ap.add_argument("--junit", help="batch mode: write a JUnit XML with one testcase per shot")
+    ap.add_argument("--default-lang", default="zh", help="batch mode language when a shot has no WS_LANG")
     return ap
 
 
-def main(argv=None):
-    a = build_parser().parse_args(argv)
-
-    if os.path.exists(a.shot):
-        os.remove(a.shot)
-    launch_fail, rc, shot_err, el = run_game(a.exe, a.cwd, a.seconds, a.shot_at, a.shot, a.log, a.timeout,
-                                             title=a.title)
+def smoke_one(a, shot, log, env, game_args, save_dir, lang):
+    """Run one smoke pass; returns (list of (name, err) results, log_text)."""
+    if lang:
+        if not save_dir:
+            save_dir = tempfile.mkdtemp(prefix="smoke-saves-")
+        write_settings(save_dir, lang)
+    gargs = list(game_args)
+    if save_dir:
+        gargs = ["--save-dir", save_dir] + gargs
+    if os.path.exists(shot):
+        os.remove(shot)
+    extra = {}  # only passed when used, so the legacy call shape (and test doubles for it) stays valid
+    if env:
+        extra["extra_env"] = env
+    if gargs:
+        extra["game_args"] = gargs
+    launch_fail, rc, shot_err, el = run_game(a.exe, a.cwd, a.seconds, a.shot_at, shot, log, a.timeout,
+                                             title=a.title, **extra)
     log_text = ""
-    if os.path.isfile(a.log):
-        with open(a.log, "r", encoding="utf-8", errors="replace") as f:
+    if os.path.isfile(log):
+        with open(log, "r", encoding="utf-8", errors="replace") as f:
             log_text = f.read()
     bad = scan_log(log_text)
-
     results = [
         ("launch & exit code == 0", launch_fail),
         ("no error/panic/leak in log", None if not bad else "%d suspicious line(s):\n%s" % (len(bad), "\n".join(bad[:30]))),
-        ("screenshot taken", shot_err or (None if os.path.isfile(a.shot) and os.path.getsize(a.shot) > 0 else "screenshot file missing")),
+        ("screenshot taken", shot_err or (None if os.path.isfile(shot) and os.path.getsize(shot) > 0 else "screenshot file missing")),
     ]
+    return results, log_text, el
+
+
+def report(results, log_text):
     failed = 0
     for name, err in results:
         print("%s %s" % ("FAIL" if err else "PASS", name))
@@ -266,7 +346,84 @@ def main(argv=None):
             print("    " + err.replace("\n", "\n    ")[:1500])
     if failed:
         print("--- log tail ---\n" + log_text[-3000:])
+    return failed
+
+
+_XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
+def _xml_safe(s):
+    return _XML_BAD.sub("", s)
+
+
+def write_shots_junit(path, cases):
+    """cases: list of (name, seconds, error_or_None)."""
+    fails = sum(1 for c in cases if c[2])
+    root = ET.Element("testsuites")
+    suite = ET.SubElement(root, "testsuite", name="shots", tests=str(len(cases)), failures=str(fails),
+                          errors="0", skipped="0", time="%.2f" % sum(c[1] for c in cases))
+    for name, secs, err in cases:
+        tc = ET.SubElement(suite, "testcase", classname="shots", name=name, time="%.2f" % secs)
+        if err:
+            f = ET.SubElement(tc, "failure", message=_xml_safe(err.splitlines()[0][:200]) if err.strip() else "failed")
+            f.text = _xml_safe(err[:4000])
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+
+
+def run_batch(a):
+    try:
+        with open(a.shots_file, "r", encoding="utf-8") as f:
+            shots = parse_shots(f.read())
+    except (OSError, ValueError) as e:
+        print("FAIL shots file: %s" % e)
+        return 2
+    if not a.out_dir:
+        print("FAIL --shots-file needs --out-dir")
+        return 2
+    os.makedirs(a.out_dir, exist_ok=True)
+    base_env = parse_env_pairs(a.env)
+    base_args = shlex.split(a.args)
+    saves_root = tempfile.mkdtemp(prefix="smoke-saves-")
+    cases, failed = [], 0
+    for s in shots:
+        name = s["name"]
+        print("=== shot %s env=%s args=%s" % (name, s["env"], s["args"]), flush=True)
+        env = dict(base_env)
+        env.update(s["env"])
+        lang = env.get("WS_LANG") or a.default_lang
+        save_dir = os.path.join(saves_root, name)
+        shot = os.path.join(a.out_dir, name + ".png")
+        log = os.path.join(a.out_dir, name + ".log")
+        try:
+            results, log_text, el = smoke_one(a, shot, log, env, base_args + s["args"], save_dir, lang)
+        except Exception as e:  # noqa: BLE001 - one bad shot must not hide the others
+            results, log_text, el = [("smoke run", "exception: %r" % (e,))], "", 0.0
+        n = report(results, log_text)
+        failed += 1 if n else 0
+        err = "\n".join("%s: %s" % (nm, er) for nm, er in results if er) or None
+        cases.append((name, el, err))
+    if a.junit:
+        write_shots_junit(a.junit, cases)
+    shutil.rmtree(saves_root, ignore_errors=True)
+    print("shots: %d run, %d failed" % (len(cases), failed))
     return 1 if failed else 0
+
+
+def main(argv=None):
+    ap = build_parser()
+    a = ap.parse_args(argv)
+    if a.shots_file:
+        return run_batch(a)
+    if not a.shot or not a.log:
+        ap.error("--shot and --log are required (unless --shots-file is used)")
+    try:
+        env = parse_env_pairs(a.env)
+    except ValueError as e:
+        ap.error(str(e))
+    results, log_text, _ = smoke_one(a, a.shot, a.log, env, shlex.split(a.args), a.save_dir, a.lang)
+    return 1 if report(results, log_text) else 0
 
 
 if __name__ == "__main__":
