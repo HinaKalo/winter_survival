@@ -91,8 +91,8 @@ T1="$(date +%s)"
 if [ "$RC" -eq 124 ]; then
   echo "ci_verify: gave up waiting after ${MAXWAIT}s (Windows agent busy/offline?); build keeps running in Jenkins"
 fi
-BUILD="$(grep -oE "Started $JOB #[0-9]+" "$OUT/console.log" | head -1 | grep -oE '[0-9]+$' || true)"
-RESULT="$(grep -oE 'Finished: [A-Z_]+' "$OUT/console.log" | tail -1 | sed 's/Finished: //' || true)"
+BUILD="$(grep -aoE "Started $JOB #[0-9]+" "$OUT/console.log" | head -1 | grep -oE '[0-9]+$' || true)"
+RESULT="$(grep -aoE 'Finished: [A-Z_]+' "$OUT/console.log" | tail -1 | sed 's/Finished: //' || true)"
 [ -n "$RESULT" ] || RESULT="UNKNOWN(cli rc=$RC)"
 
 # ---- artifacts (credentials go through a 0600 curl config, never argv)
