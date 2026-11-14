@@ -73,13 +73,38 @@ local function scenario()
   iso.map_set_draw_tiles(false)
   probe.check("map logic still works with tiles hidden", iso.map_walkable ~= nil)
   iso.map_set_draw_tiles(true)
+  -- review r1 (P2): draw_tiles must really stop tile drawing. Load a real home map (has a tile atlas).
+  do
+    local mapbuild = require("view.mapbuild")
+    local plan = mapbuild.plan(require("data.homes.ranch_a"), { mode = "cutaway" })
+    mapbuild.apply(plan, { add_light = function() return nil end })
+    iso.camera_set_target(plan.w / 2, 0, plan.h / 2)
+    iso.map_set_draw_tiles(true)
+    wait(0.3)
+    local on = iso.render_stats()[3]
+    probe.check("tiles drawn when draw_tiles is on (" .. tostring(on) .. ")", on > 0)
+    iso.map_set_draw_tiles(false)
+    wait(0.3)
+    local off = iso.render_stats()[3]
+    probe.check("no tile chunks drawn when draw_tiles is off (" .. tostring(off) .. ")", off == 0)
+    probe.check("map logic unchanged with tiles off", iso.map_walkable(5, 3) == true)
+    iso.map_set_draw_tiles(true)
+  end
 
   -- ghost entities
   local e = iso.entity_spawn and iso.entity_spawn(0, 2.5, 2.5, 1.0, 1.5) or nil
   if e then
     probe.check("entity starts as non-ghost", iso.entity_get_ghost(e) == false)
+    -- review r1 (P2): ghosts are not pickable
+    iso.camera_set_target(2.5, 0, 2.5)
+    wait(0.2)
+    local sp = iso.world_to_screen(2.5, 0.6, 2.5)
+    local before = sp and iso.entity_pick(sp[1], sp[2], false)
+    probe.check("a normal entity is pickable at its screen position", before == e)
     iso.entity_set_ghost(e, true)
     probe.check("entity_set_ghost(true) sticks", iso.entity_get_ghost(e) == true)
+    local after = sp and iso.entity_pick(sp[1], sp[2], false)
+    probe.check("a ghost is not pickable", after ~= e)
     iso.entity_set_ghost(e, false)
     probe.check("entity_set_ghost(false) clears", iso.entity_get_ghost(e) == false)
   else

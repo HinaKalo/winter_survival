@@ -142,8 +142,8 @@ function T.action_ids_match_spec()
   for id in pairs(have) do
     if not id:match("^dev%.") then n = n + 1 end
   end
-  assert(#cases_mod.SPEC_IDS == 65)
-  assert(n == 65, "non-dev action count " .. n)
+  assert(#cases_mod.SPEC_IDS == 67) -- M5-3D: +floor_up, floor_down
+  assert(n == 67, "non-dev action count " .. n)
 end
 
 function T.contexts()

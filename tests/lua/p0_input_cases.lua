@@ -17,6 +17,7 @@ M.SPEC_IDS = {
   "quick_1", "quick_2", "quick_3", "quick_4",
   "open_inventory", "open_craft", "open_tech", "open_map", "open_journal", "open_wheel", "end_day",
   "camera_pan", "camera_zoom_in", "camera_zoom_out", "camera_center", "show_overlay_info",
+  "floor_up", "floor_down", -- M5-3D
   "screenshot", "fullscreen", "dev_panel", "system_menu",
 }
 
