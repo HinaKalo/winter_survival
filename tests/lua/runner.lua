@@ -3,30 +3,15 @@
 -- can yield between game days and keep the probe/watchdog tick alive.
 package.path = "tests/lua/?.lua;" .. package.path
 
-local test_files = {
-  "test_core",
-  "test_data_locations",
-  "test_facing",
-  "test_input",
-  "test_lightfov",
-  "test_mapbuild",
-  "test_layout",
-  "test_layering",
-  "test_data",
-  "test_sim_state",
-  "test_sim_clock",
-  "test_sim_inventory",
-  "test_sim_needs",
-  "test_sim_health",
-  "test_sim_thermal",
-  "test_sim_power",
-  "test_sim_craft",
-  "test_sim_tech",
-  "test_sim_bot",
-  "test_sim_weather",
-  "test_sim_30d",
-  "test_m3_final",
-}
+local test_files = {}
+for _, path in ipairs(assert(sys.list_files("tests/lua", ".lua"))) do
+  local relative = path:match("^tests/lua/(.+)%.lua$")
+  local basename = relative and relative:match("([^/]+)$")
+  if basename and basename:match("^test_.*$") then
+    test_files[#test_files + 1] = relative:gsub("/", ".")
+  end
+end
+table.sort(test_files)
 
 local queue = {}
 local current = nil
@@ -94,6 +79,7 @@ function _probe(_t, _dt)
     -- test_sim_30d drives two full reference-bot runs plus save/load checkpoints.
     kit_probe.timeout(900)
     for _, mod_name in ipairs(test_files) do
+      kit_probe.info("suite " .. mod_name)
       enqueue_suite(mod_name)
     end
   end
