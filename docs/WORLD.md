@@ -9,7 +9,7 @@
 - 时间单位：路程用**游戏分钟**（D7：现实 1 秒 = 游戏 1 分钟）。夜晚共 480 分钟，往返耗时从中扣除。
 - DSL 参数形式（NARRATIVE §2.7 未给全，本文按以下形式书写，见 §12 裁决 R1）：
   条件 `{"fact",key,op,val}`、`{"has_item",id,n}`、`{"rep",faction,op,val}`、`{"char",who,"has_trait",t}`、`{"char",who,"state_at_least",s}`（s ∈ steady/shaken/low/depressed/broken）、`{"npc_alive",id}`、`{"deed_exists",{verb=,target=,within_days=,loc=}}`、`{"day_between",a,b}`、`{"phase",p}`、`{"chance",p}`；
-  效果 `{"fact","set"|"add",key,val}`、`{"item","+"|"-",id,n}`、`{"morale",who,delta,reason_key}`、`{"rep",faction,delta}`、`{"relation",a,b,delta}`、`{"wound",who,level}`、`{"deed",{...}}`、`{"schedule",id,{after_days={a,b},bind={...}}}`。
+  效果 `{"fact","set"|"add",key,val}`、`{"item","+"|"-",id,n}`、`{"morale",who,delta,reason_key}`、`{"rep",faction,delta}`、`{"relation",a,b,delta}`、`{"wound",who,level}`、`{"deed",{...}}`、`{"schedule",id,{after_days={a,b},bind={...}}}`、`{"loc_state"|"loc_occ"|"loc_alert"|"loc_add"|"unlock_loc",loc,...}`（地点写入口，见 §8 末尾）。
 - 角色 id：`marcus elena junho linwei dale tasha walt priya sam grace`。NPC id：`npc.<name>`。片段 id 用 snake_case；i18n 键 `st.<片段id>.<字段>`。
 - 角色线片段 id：`arc_<char>_<n>`（n = 1..3），推进规则 `arc.<char>.stage`：0 → 1 → 2 → 3，完成第 n 段后 stage = n。每条线另有一句无选项的伏笔台词 `bark_<char>_0`（PLAN §10.6 S4），不进 DSL 与平衡测试，只在播出时置 `flag.bark_<char>_0`。
 
@@ -547,9 +547,9 @@
 | construction_site | 未竟工地 Falls View Site | 50 | 0 | 0 | 50 | 2 | 3 | finn |
 | police_station | 警察局 Harlow PD | 20 | 40 | 0 | 40 | 3 | 4 | lowe |
 | river_dock | 河边码头 River Landing | 40 | 20 | 40 | 0 | 2 | 2 | odell |
-| checkpoint_kilo | 基洛哨站 Checkpoint Kilo | 0 | 0 | 0 | 100（官方） | 2 | 5 | marsh, pike |
+| checkpoint_kilo | 基洛哨站 Checkpoint Kilo | 0 | 0 | 0 | 100 | 2 | 5 | marsh, pike |
 
-备注：checkpoint_kilo 的"占用"固定为哨站，不随机；"敌对"指武装。warehouse 固定掠夺者。每局至少有一个超市/药房被"敌对/平民"占用，保证夜袭有对象（生成器校验）。
+备注：checkpoint_kilo 的 `occ` 固定为 `hostile`，不随机（"敌对"指武装）；它的"官方"身份不新增 `occ` 枚举，由地点 id 与 `rep.kilo` 表达。warehouse 固定掠夺者。每局至少有一个超市/药房被"敌对/平民"占用，保证夜袭有对象（生成器校验）。
 
 ### 6.2 逐地点详述
 
@@ -777,10 +777,12 @@ A：县政府地下车库入口 → 走廊 → 军需仓 / 通讯室；B：从�
 | `rel.<a>.<b>` | N | −100..100，a 对 b 的关系值（派生，条件里可读） |
 | `food_days_home` | N | 家中存粮可撑天数（派生） |
 | `kilo.gift_given` | B | 已向派克送礼 |
-| `loc.<id>.state` | S | unknown / known / visited / hostile / empty / friendly / burned |
+| `loc.<id>.state` | S | unknown / known / visited / friendly / burned，**只表示对玩家的接触进度**；hostile / empty 不在此，只在 `occ` |
 | `loc.<id>.unlocked` | B | 是否已开放 |
-| `loc.<id>.occ` | S | empty / civilian / trader / hostile（占用状态） |
-| `loc.<id>.layout` | N | 布局模板编号 |
+| `loc.<id>.occ` | S | empty / civilian / trader / hostile（占用状态；checkpoint_kilo 固定 hostile） |
+| `loc.<id>.alert` | B | 因被偷抢而进入戒备（§9.3 `world_guard_up` 置真，`world_return_reset` 置假） |
+| `loc.<id>.variant` | S | 布局变体字母 A / B（§6.2、M2-PLAN §2.1；不用数字编号） |
+| `loc.<id>.raid_difficulty` | N | 1..5，夜袭难度（§6.1） |
 | `loc.<id>.food_days` | N | 住户存粮可撑天数（NARRATIVE §2.5） |
 | `loc.<id>.attitude` | N | −3..+3，对玩家态度 |
 | `loc.<id>.guard` | N | 0..3 防备等级 |
@@ -827,6 +829,8 @@ A：县政府地下车库入口 → 走廊 → 军需仓 / 通讯室；B：从�
 | `ending.variant` | S | 各结局的变体标签 |
 | `epilogue.<char>` | S | 逐角色尾声标签（结局时计算） |
 
+**`loc.*` 的数据源**：`state.world.locations[id]`（PARALLEL-PLAN C8）是地点数据的**唯一数据源**；上表的 `loc.<id>.*` 事实全部由它派生（`facts.derive("loc.", ...)`），字段同名（`loc.<id>.occ` = `world.locations[id].occ`，`raid_difficulty`、`variant`、`alert` 等同理），黑板里不另存一份。因此 `loc.*` 只读，写入一律走专用效果：`loc_state`（`state`）、`loc_occ`（`occ`）、`loc_alert`（`alert`）、`loc_add`（`food_days`、`guard`、`attitude`、`looted`……）、`unlock_loc`（`unlocked`）。`state`（接触进度）与 `occ`（占用）互相独立：空屋是 `occ = "empty"`，不是 `state`。
+
 ---
 
 ## 9. 反应规则目录（25 条）
@@ -866,14 +870,14 @@ A：县政府地下车库入口 → 走廊 → 军需仓 / 通讯室；B：从�
 | id | 匹配条件 | 效果 |
 |---|---|---|
 | `robbed_household_starves` | verb ∈ steal/rob，occupied，took_essentials | `loc_add($loc, food_days, -3)`；`schedule("beggar_at_door", {after_days={2,4}, bind={victim="$target"}})`（`$loc = school` 时改排 `school_after_raid`，见 §10.1） |
-| `world_guard_up` | verb ∈ steal/rob，occupied | `loc_add($loc, guard, +1)`；`loc_state($loc, "alert")` |
-| `world_defect_to_raiders` | `loc.$loc.food_days ≤ 0` 且 `loc.$loc.attitude ≤ -2` 且 `raiders.strength ≥ 1` | `chance 0.3`：`loc_state($loc, "empty")`，`raiders.strength +1`，`schedule("revenge_party", {after_days={3,5}})` |
+| `world_guard_up` | verb ∈ steal/rob，occupied | `loc_add($loc, guard, +1)`；`loc_alert($loc, true)` |
+| `world_defect_to_raiders` | `loc.$loc.food_days ≤ 0` 且 `loc.$loc.attitude ≤ -2` 且 `raiders.strength ≥ 1` | `chance 0.3`：`loc_occ($loc, "empty")`，`raiders.strength +1`，`schedule("revenge_party", {after_days={3,5}})` |
 | `world_survivor_flees` | verb ∈ rob/assault/kill，有 `witnesses` 存活 | 幸存者 `npc.<id>.status="fled"`，`loc` 改为 church 或 checkpoint_kilo；`schedule("survivor_flees_to_church")` |
-| `world_empty_house_squatter` | `loc.$loc.members_alive == 0` 且 `loc.$loc.state="empty"` | 每日 `chance 0.1`：`loc.$loc.occ ← raiders 或 civilian` |
+| `world_empty_house_squatter` | `loc.$loc.members_alive == 0` 且 `loc.$loc.occ="empty"` | 每日 `chance 0.1`：`loc_occ($loc, "hostile"` 或 `"civilian")` |
 | `world_friend_gift` | `loc.$loc.attitude ≥ +2`（交易或帮助累计 ≥ 2） | `schedule("gift_from_friendly_household", {after_days={2,4}})` |
 | `world_burial_closure` | verb=bury | 对 `$loc` 邻居 `attitude +1`；`rep(st_mark, +2)` |
-| `world_unwitnessed_kill` | verb=kill，无 witnesses | 不触发传播；`schedule("body_found", {after_days={3,5}, bind={loc="$loc"}})`，找到后 `loc.$loc.state="empty"` |
-| `world_return_reset` | verb=return_goods | `loc.$loc.attitude +2`（上限 0 → 若原为 −3 则恢复至 −1）；移除 `loc_state alert` |
+| `world_unwitnessed_kill` | verb=kill，无 witnesses | 不触发传播；`schedule("body_found", {after_days={3,5}, bind={loc="$loc"}})`，找到后 `loc_occ($loc, "empty")` |
+| `world_return_reset` | verb=return_goods | `loc.$loc.attitude +2`（上限 0 → 若原为 −3 则恢复至 −1）；`loc_alert($loc, false)` |
 
 ---
 

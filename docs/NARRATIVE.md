@@ -66,12 +66,17 @@
   id = 137, day = 7, phase = "night",
   verb = "steal",            -- steal / rob / assault / knockout / kill / spare / help / give
                              -- trade_fair / trade_cheat / refuse_help / abandon / betray
-                             -- rescue / bury / confess / return_goods / inform ...
+                             -- rescue / bury / confess / return_goods / inform / die
+                             -- die = 病、冻、事故致死，无动手者（WORLD §2.4）；没有 break_in、intimidate 动词：
+                             -- 撬门入户 = steal/rob + 标签 break_in，持械威吓 = 标签 armed_threat（WORLD §2.2）
   actor = "sam",             -- 动手的人；squad 列出同行者
   squad = { "sam", "tasha" },
   target = "npc.miller_ruth", target_kind = "civilian",   -- civilian/raider/soldier/trader/teammate/nobody
-  loc = "suburb_02",
+                             -- target 格式：具名 NPC "npc.<id>"；队友 = 角色 id（如 "grace"）；势力 "faction.<id>"
+                             -- （id ∈ civilians/st_mark/traders/raiders/kilo，同 rep.<faction>）；整户 "loc.<地点 id>"；无对象 nil
+  loc = "suburb_house",      -- 地点 id = 原型 id（WORLD §1.3，每原型一处）
   tags = { occupied = true, victim_vulnerable = true, took_essentials = true, lethal = false },
+                             -- 标签表见 WORLD §2.2；break_in 只是标记（无权重行），armed_threat 有权重行
   witnesses = { "npc.miller_ruth" },   -- 活着的目击者
   magnitude = 0.6,           -- 0..1，被拿走的东西对受害方有多要紧
 }
@@ -167,7 +172,7 @@
 
 **条件 DSL**（`sim/cond.lua`）：`all / any / not`、`fact`（比较）、`has_item`、`char`（特质、状态）、`npc_alive`、`deed_exists`（可限定最近 N 天、动词、对象、地点）、`rep`、`day_between`、`phase`、`chance`（用剧情随机流）。加载时编译成函数。
 
-**效果 DSL**（`sim/effects.lua`）：`item`、`fact`、`morale`（带原因键）、`rep`、`relation`、`wound`、`heal`、`join`、`leave`、`die`、`deed`（写入账本并触发反应规则）、`schedule`、`loc_state`、`loc_add`、`unlock_loc`、`unlock_recipe`、`goto`。
+**效果 DSL**（`sim/effects.lua`）：`item`、`fact`、`morale`（带原因键）、`rep`、`relation`、`wound`、`heal`、`join`、`leave`、`die`、`deed`（写入账本并触发反应规则）、`schedule`、`loc_state`（只写接触进度 `loc.<id>.state`）、`loc_occ`（写占用 `occ`）、`loc_alert`（写布尔 `alert`）、`loc_add`、`unlock_loc`、`unlock_recipe`、`goto`。
 
 各条件与效果的完整参数形式见 WORLD §8–§10 与 PLAN §10 W1，M8 由 lint 校验。
 
@@ -205,7 +210,7 @@
 | `sim/story.lua` | 片段池、排期、导演 | `story.pick(slot, ctx) -> storylet|nil`、`story.choose(inst, idx)`、`story.schedule(id, when, bind)` |
 | `sim/lint.lua` | 静态校验 | `lint.run() -> errors`（引用完整性、三语键齐全、无孤立片段） |
 
-约束：以上文件都属于纯模型层（D10），不 `require` 任何引擎库。随机数只用 `core/rng.lua` 的具名随机流（`story`、`loot`、`combat`、`worldgen`、`fx`），流的状态进存档。
+约束：以上文件都属于纯模型层（D10），不 `require` 任何引擎库。随机数只用 `core/rng.lua` 的具名随机流（`story`、`loot`、`combat`、`worldgen`、`health`、`weather`、`fx`），流的状态进存档。代码（`sim/state.lua` 的 `STREAMS`）目前只有前六个；`fx`（视觉随机）暂不进 STREAMS，需要时再加，走 PARALLEL-PLAN §5。
 
 ### 2.10 调试与验证手段
 

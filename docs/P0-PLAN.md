@@ -245,26 +245,28 @@ reg("eat", function(state, cmd) ... end, {
 ```lua
 return {
   -- clock
-  ["clock.phase_changed"] = { "from", "to", "day" },
-  ["clock.day_started"]   = { "day" },
+  phase_changed    = { "from", "to", "day" },
+  day_started      = { "day" },
   -- char
-  ["char.died"]           = { "id", "cause", "day" },
-  ["char.wounded"]        = { "id", "amount", "cause" },
-  ["char.left_party"]     = { "id", "reason" },
-  ["char.joined_party"]   = { "id" },
+  char_died        = { "id", "cause", "day" },
+  char_wounded     = { "id", "amount", "cause" },
+  char_left_party  = { "id", "reason" },
+  char_joined_party = { "id" },
   -- home
-  ["home.station_changed"]  = { "id", "on", "hp" },
-  ["home.room_temp_alert"]  = { "room", "temp", "level" },
+  station_changed  = { "id", "on", "hp" },
+  room_temp_alert  = { "room", "temp", "level" },
   -- weather
-  ["weather.snap_warning"]  = { "start_day", "severity" },
+  snap_warning     = { "start_day", "severity" },
   -- story
-  ["story.ready"]         = { "slot", "id" },
+  storylet_ready   = { "slot", "id" },
   -- raid
-  ["raid.ended"]          = { "loc", "exit" },
+  raid_ended       = { "loc", "exit" },
 }
 ```
 
-`sim/emit.lua`：`emit(name, data)` 查目录，未知事件或缺必填字段直接 `error`，否则 `bus.emit(name, data)`。P0 只接线四处：`sim.advance_phase` 发 `clock.phase_changed`，`sim.on_new_day` 发 `clock.day_started`，`chars.kill` 发 `char.died`，`health.add_wound` 发 `char.wounded`；其余事件只登记。发事件不写状态，所以 balance 不受影响。
+事件名一律扁平 snake_case，匹配 `^[a-z]+(_[a-z]+)*$`，全局唯一，分段注释不进名字（PARALLEL-PLAN C3，已由 §9.5 取代旧的域前缀写法）。
+
+`sim/emit.lua`：`emit(name, data)` 查目录，未知事件或缺必填字段直接 `error`，否则 `bus.emit(name, data)`。P0 只接线四处：`sim.advance_phase` 发 `phase_changed`，`sim.on_new_day` 发 `day_started`，`chars.kill` 发 `char_died`，`health.add_wound` 发 `char_wounded`；其余事件只登记。发事件不写状态，所以 balance 不受影响。
 
 **C4 查询层**：`sim/query/{party,home,inv,craft,tech,clock,night}.lua`。纯函数、只读，返回值只含数字/字符串/布尔/表，文本一律是 i18n 键或 id/枚举。P0 给出真实的最小实现（夹具上有数据可显示），形状如下：
 
@@ -280,7 +282,7 @@ return {
 | `clock.hud(state)` | `{ day, days_total, minute, hh, mm, phase, outdoor_temp, forecast_level, snap_warning }` |
 | `night.plan(state)` | `{ roles = { { id, role } }, target, loadout = {}, editable }` |
 
-**C6 行为记录**：`sim/deeds.lua`：`deeds.record(state, t) -> deed_id`（校验顶层字段后追加到 `state.story.deeds`，id 取 `state.story.deed_seq` 自增）、`deeds.query(state, filter) -> list`（按 `kind`/`actor`/`loc`/`day` 过滤，按 id 升序）。`data/deed_kinds.lua` 只追加。**字段表与 NARRATIVE §2.4 的记录格式不一致，P0-4 的这一部分等 Q1 裁定后再做**。
+**C6 行为记录**：`sim/deeds.lua`：`deeds.record(state, t) -> deed_id`（校验顶层字段后追加到 `state.story.deeds`，id 取 `state.story.deed_seq` 自增）、`deeds.query(state, filter) -> list`（按 `verb`/`actor`/`loc`/`day` 过滤，按 id 升序）。`data/deed_kinds.lua` 只追加。**字段表以 PARALLEL-PLAN C6 为准（已由 §9.5 取代旧的 `kind/accomplices/target{type,id}/witnessed/evidence/severity/data`）**：`verb`（含 `die`；无 `break_in`/`intimidate`，用标签 `break_in`/`armed_threat`）、`actor`、`squad`、`target`（`npc.<id>` / 角色 id / `faction.<id>` / `loc.<id>` / nil）、`target_kind`、`loc`、`tags`、`witnesses`、`magnitude`；`id`、`day`、`phase` 由 `record` 填。`deeds.query` 的过滤键用 `verb`/`actor`/`loc`/`day`（不再是 `kind`）。P0-4 的 C6 不再等待裁决。
 
 **C7 副本接口**：`sim/raid.lua`：
 
@@ -288,9 +290,9 @@ return {
 - `raid.begin` 返回 `nil, "not_implemented"`；`raid.commit` 先用 `raid.validate_result(result)`（真实实现，查 `loot/wounds/deaths/deeds/minutes_used/exit`）再返回 `false, "not_implemented"`。
 - 命令 `raid.autoresolve` 改调 `raid.autoresolve`；删除 `sim/expedition.lua`；`data/balance.lua` 的 `expedition` 分节名不变（M10 再改）。验收：balance 摘要与 checksum 都与阶段 B 基线相同（纯搬运）。
 
-**C8 地点数据**：`sim/locations.lua`：`locations.validate(loc) -> ok, err`（按 C8 字段查类型与枚举）、`locations.get(state, id)`、`locations.list(state)`（按 id 排序）。`tests/fixtures/locations/suburb_house_a.lua` 手写一份通过校验的地点（`archetype = "suburb_house"`、`variant = "A"`，容器槽取 `data/locations/suburb_house.lua` 的道具槽）。字段名与 WORLD 的出入见 Q9。
+**C8 地点数据**：`sim/locations.lua`：`locations.validate(loc) -> ok, err`（按 C8 字段查类型与枚举）、`locations.get(state, id)`、`locations.list(state)`（按 id 排序）。`tests/fixtures/locations/suburb_house_a.lua` 手写一份通过校验的地点（`archetype = "suburb_house"`、`variant = "A"`，容器槽取 `data/locations/suburb_house.lua` 的道具槽）。字段名已按 WORLD 回改（§9.5）：`occ`、`travel_min`、`raid_difficulty`、字母 `variant`、`state` 只含 unknown/known/visited/friendly/burned、独立布尔 `alert`；`world.locations` 是唯一数据源，`loc.*` 事实由它派生。
 
-**C9 片段挂点**：`sim/story.lua`：`story.SLOTS`（C9 的 12 个名字）、`story.pick(slot, ctx)`（未知挂点 `error`，否则恒返回 nil）、`story.choose(state, inst, idx)` 返回 `false, "not_implemented"`。文件头列出每个挂点的 `ctx` 附加字段。挂点名与 NARRATIVE/WORLD 的出入见 Q2。
+**C9 片段挂点**：`sim/story.lua`：`story.SLOTS`（C9 的 11 个名字：`door_day, radio, dawn, dusk, home_idle, raid_enter, raid_found, travel, dream, talk, crisis`）、`story.pick(slot, ctx)`（未知挂点 `error`，否则恒返回 nil）、`story.choose(state, inst, idx)` 返回 `false, "not_implemented"`。文件头列出每个挂点的 `ctx` 附加字段。挂点名已按 NARRATIVE §2.7 回改（§9.5）。
 
 ### 3.5 P0-5 测试夹具
 
@@ -347,7 +349,7 @@ return {
 | P0-1 | 文本表拆分（§3.1） | haiku | P0-0、P0-3、（PANEL 控件，Q5） | `assets/i18n/**`、`core/i18n.lua`、`tools/i18n_check.py`、`tools/bake_font.py`、`tests/tools/test_i18n_check.py`、`tests/tools/test_bake_font.py`、`tests/lua/test_i18n_split.lua`、`tests/lua/fixtures/i18n_dup/**` | 本地：`assets.py check` 与 Python 单测全过；`python3 tools/bake_font.py` 后 `git status assets/fonts` 无改动。CI quick：`test_i18n_split`（三语键数与拆分前相同、重复键样例报错且报出两个文件名）、`ui_text` 探针过 |
 | P0-2 | 命令注册式（§3.2），阶段 A、B 两次提交 | sonnet | §1.3 基线 | `sim/commands.lua`、`sim/cmd/*.lua`（9 个）、`sim/sim.lua`（仅 `command`）、阶段 B：`sim/bot.lua`、`tests/lua/test_sim_*.lua`；新增 `tests/lua/test_commands.lua` | 阶段 A：CI full，balance 报告与基线逐字节相同。阶段 B：CI full，摘要不变。`test_commands`：重复注册/前缀不符报错；每个别名指向已注册命令；10 个预留命令返回 `not_implemented` 且状态 checksum 不变；每种参数类型的正反例；**模糊测试**：在 `sim.new(1)` 和跑完 1 天的状态上，对每个命令的每个参数代入坏值，断言 `ok == false` 且去掉 `log`/`errors` 后的编码与调用前逐字节相同 |
 | P0-3 | 输入动作补齐（§3.3） | sonnet | — | `core/input.lua`、`ui/rebind.lua`、`scenes/m2_demo.lua`（仅 dev 键提示）、`assets/main.lua`（fullscreen/screenshot/dev_panel 处理）、`assets/i18n/{zh,en,ko}.lua`（P0-1 之前的平铺文件）、`tests/lua/test_input_actions.lua`、`tests/probe/p0_inputs.lua` | CI quick：`test_input_actions`（动作 id 集合与 §7.1 的 65 个逐一相等；`validate()` 通过；默认绑定除 `SHARED_DEFAULTS` 外无冲突；短按/长按配对与触发时机；摇杆方向边沿；每个动作有 `act.<id>`）；`p0_inputs` 对每个动作 × 每个有绑定的设备注入默认输入（`probe.key/click/pad_button/pad_axis`），断言在 `HOLD_S` + 2 帧内触发且只触发该动作及其白名单伙伴；`m1_inputs` 仍过 |
-| P0-4 | 契约骨架（§3.4）；C6 等 Q1 | sonnet | P0-2 | `sim/state.lua`、`sim/schema/*.lua`、`sim/events.lua`、`sim/emit.lua`、`sim/query/*.lua`、`sim/deeds.lua`、`data/deed_kinds.lua`、`sim/raid.lua`、`sim/locations.lua`、`sim/story.lua`、`sim/cmd/raid.lua`、`sim/sim.lua`、`sim/chars.lua`、`sim/health.lua`（各一行 emit）；删除 `sim/expedition.lua`；`tests/fixtures/locations/suburb_house_a.lua`；`tests/lua/test_contracts.lua` | CI full：C1 改动后摘要不变（checksum 变化，记基线）；C7 搬运后 checksum 也不变。`test_contracts`：v1 状态迁移到 v2 并通过校验；`state.raid` 非空被拒；目录里每个事件名带域前缀，未知事件/缺字段报错；9 个查询在 `sim.new(1)` 与跑完 3 天的状态上返回规定形状、调用前后 checksum 相同、返回值里的字符串全是 id/枚举/i18n 键；`deeds.record` 坏字段被拒、id 递增；`raid.validate_result` 正反例；`locations.validate` 接受夹具地点、拒绝缺字段；`story.pick` 对 12 个挂点返回 nil、未知挂点报错 |
+| P0-4 | 契约骨架（§3.4）；C6 已定（§9.5） | sonnet | P0-2 | `sim/state.lua`、`sim/schema/*.lua`、`sim/events.lua`、`sim/emit.lua`、`sim/query/*.lua`、`sim/deeds.lua`、`data/deed_kinds.lua`、`sim/raid.lua`、`sim/locations.lua`、`sim/story.lua`、`sim/cmd/raid.lua`、`sim/sim.lua`、`sim/chars.lua`、`sim/health.lua`（各一行 emit）；删除 `sim/expedition.lua`；`tests/fixtures/locations/suburb_house_a.lua`；`tests/lua/test_contracts.lua` | CI full：C1 改动后摘要不变（checksum 变化，记基线）；C7 搬运后 checksum 也不变。`test_contracts`：v1 状态迁移到 v2 并通过校验；`state.raid` 非空被拒；目录里每个事件名匹配 `^[a-z]+(_[a-z]+)*$`（扁平 snake_case）且唯一，未知事件/缺字段报错；9 个查询在 `sim.new(1)` 与跑完 3 天的状态上返回规定形状、调用前后 checksum 相同、返回值里的字符串全是 id/枚举/i18n 键；`deeds.record` 坏字段被拒、id 递增；`raid.validate_result` 正反例；`locations.validate` 接受夹具地点、拒绝缺字段；`story.pick` 对 11 个挂点返回 nil、未知挂点报错 |
 | P0-5 | 夹具（§3.5） | haiku | P0-4 | `tests/fixtures/make.lua`、`tests/fixtures/*.sav`、`tests/fixtures/manifest.lua`、`sim/bot.lua`（仅 `stop_minute`）、`tests/lua/test_fixtures.lua` | CI 用 `--probes tests/fixtures/make.lua` 生成并下载；再跑 CI quick，`test_fixtures` 全过；balance 摘要不变（`stop_minute` 不影响正常路径） |
 | P0-6 | 场景外壳与 `--scene/--fixture`（§3.6） | haiku | P0-0、P0-1、P0-5 | `scenes/{newrun,home,dusk,worldmap,trade,raid,dawn,ending,shell,registry,launch}.lua`、`scenes/title.lua`（仅“新局”出边）、`assets/main.lua`、`assets/i18n/*/core.lua`（`scene.*`）、`tests/probe/p0_scenes.lua`、`docs/p0_shots.txt` | CI quick：`p0_scenes` 对 4 个夹具 × 8 个场景调用 `launch.enter`，跑 3 帧，逐条触发出边，无 Lua 错误、栈深度符合预期；再用纯键盘走一遍 title→newrun→home→dusk→raid→dawn→home。CI `--shots docs/p0_shots.txt`：每张截图有场景名和按钮，三语无缺字 |
 | P0-7 | 错误码文本（§3.7） | haiku | P0-1、P0-2 | `assets/i18n/*/core.lua`、`assets/i18n/*/home.lua`、`sim/commands.lua`（仅 `error_key`）、`tests/lua/test_cmd_errors.lua` | 本地 `assets.py check` 过；CI quick `test_cmd_errors` 过 |
@@ -383,22 +385,22 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 
 | # | 问题 | 本文默认 |
 |---|---|---|
-| Q1（已裁决，见 §9.1） | C6 记录格式（`kind/accomplices/target{type,id}/witnessed/evidence/severity/data`）与 NARRATIVE §2.4（`verb/squad/target + target_kind/tags/witnesses/magnitude/phase`）不同，以哪个为准 | 暂缓 C6，其余照做 |
-| Q2 | C9 挂点名（`dawn, day_start, door, radio, talk, dusk, raid_enter, raid_container, raid_npc, raid_after, trade_open, crisis`）与 NARRATIVE（`door_day, radio, dawn, dusk, home_idle, raid_enter, raid_found, travel, dream, talk, crisis`）及 WORLD 片段里的 `door_day` 不一致 | 按 C9 实现，等裁决再改 SLOTS |
+| Q1（已裁决，见 §9.1） | C6 记录格式（`kind/accomplices/target{type,id}/witnessed/evidence/severity/data`）与 NARRATIVE §2.4（`verb/squad/target + target_kind/tags/witnesses/magnitude/phase`）不同，以哪个为准 | （已由 §9.5 取代）C6 按 PARALLEL-PLAN 现行字段做 |
+| Q2 | C9 挂点名（`dawn, day_start, door, radio, talk, dusk, raid_enter, raid_container, raid_npc, raid_after, trade_open, crisis`）与 NARRATIVE（`door_day, radio, dawn, dusk, home_idle, raid_enter, raid_found, travel, dream, talk, crisis`）及 WORLD 片段里的 `door_day` 不一致 | （已由 §9.5 取代）SLOTS 用 NARRATIVE §2.7 的 11 个名字 |
 | Q3 | `day10_1200` 不在时段边界（PLAN §4.5 只在边界存档，机器人不能从段内续跑）：保留为“仅界面”夹具，还是改为 `day10_0600` | 保留，manifest 标 `boundary = false` |
 | Q4 | UI-UX §7.1 自相矛盾：`select_1..6` 用 1–6，`quick_1..4` 用 5–8，5、6 冲突 | 建议 `quick_1..4` 改 7、8、9、0，并回改 UI-UX |
 | Q5 | PANEL 控件（改平铺 i18n）先于还是晚于 P0-1 合入 | 先合 PANEL 控件 |
 | Q6 | 物品/配方/设施/科技/房间名称（M3 `data/` 已引用但 i18n 表里没有）以及 `char.<id>` 名字归哪个区、谁负责翻译；`char` 区归 STORY，但 HOME/PANEL 在 M4 先要用 | `items`、`tech` 区归 HOME；`char.<id>` 名字由 HOME 在 M4 补到 `char` 区，经主代理合并 |
 | Q7 | `night_roles` 映射为批量的 `night.set_roles`，同时保留 C2 的 `night.set_role/set_target` 为桩，是否接受两套 | 接受；HOME 线把单项命令做实后删批量命令 |
 | Q8 | `raid.autoresolve` 直接写状态（M3 行为）还是只返回 result 再由 `raid.commit` 写回 | P0 直接写，RAID 线定终态 |
-| Q9 | C8 与 WORLD 的出入：`distance_min` vs `travel_min`；`danger 0..3` vs 夜袭难度 1–5；地点 id 是否等于原型 id（WORLD §1.3 是，NARRATIVE 例子是 `suburb_02`）；`occupancy` 没有“官方”（checkpoint_kilo） | 按 C8 写校验，等裁决改字段名 |
+| Q9 | C8 与 WORLD 的出入：`distance_min` vs `travel_min`；`danger 0..3` vs 夜袭难度 1–5；地点 id 是否等于原型 id（WORLD §1.3 是，NARRATIVE 例子是 `suburb_02`）；`occupancy` 没有“官方”（checkpoint_kilo） | （已由 §9.5 取代）按 PARALLEL-PLAN C8 现行字段写校验：地点 id = 原型 id、`travel_min`、`raid_difficulty 1..5`、`occ`、字母 `variant`、`state` 与 `alert` 分开；checkpoint_kilo 的 `occ = "hostile"` |
 | Q10 | C1 表未列的顶层字段归属；`VERSION` 升到 2 并引入迁移表 | 见 §3.4 |
 | Q11 | 输入层新增长按、配对、摇杆方向与上下文 F（P0-3 改派 sonnet） | 照 §3.3 |
 | Q12 | 新增 Zig 绑定 `sys.list_files`（替代 i18n 清单文件和 `popen`） | 照 §3.0 |
 | Q13 | CI verify 任务需归档 `out/balance/report.json`、`tests/fixtures/*.sav`、`tests/fixtures/manifest.lua`（CI 线正在做 `tools/ci_verify.sh`） | 请 CI 线加进归档规则 |
 | Q14 | M3 背包是 `{ [item_id] = { count } }`，没有格位顺序；PANEL 的 `ItemGrid` 拖放后的位置无处保存 | P0 按 `(cat, item)` 排序显示；要持久顺序需改 C1 的 `home`/角色背包结构，HOME 线提出 |
 | Q15 | `newrun`、`ending` 场景归属 | HOME、M9 |
-| Q16 | PLAN §4.4 写 `sim.raid_begin/commit/autoresolve`，C7 写 `raid.*`；NARRATIVE 的随机流有 `fx`，M3 有 `health`、`weather`；PLAN §4.4 的事件名 `char_died/storylet_ready/snap_warning` 与 C3 不同 | 以 C7、M3、C3 为准，主代理回改 PLAN/NARRATIVE |
+| Q16 | PLAN §4.4 写 `sim.raid_begin/commit/autoresolve`，C7 写 `raid.*`；NARRATIVE 的随机流有 `fx`，M3 有 `health`、`weather`；PLAN §4.4 的事件名 `char_died/storylet_ready/snap_warning` 与 C3 不同 | （已由 §9.5 取代）PLAN §4.4 用 `raid.*`；随机流以代码 `STREAMS` 六个为准（`fx` 以后再加）；事件名全部扁平 snake_case（`char_died/storylet_ready/snap_warning/phase_changed/...`） |
 | Q17 | P0 新增 P0-0、P0-7 两个任务，P0-3 改派 sonnet | 照本文 |
 | Q18 | 预留命令的参数签名（§3.2 表）是现在冻结，还是由各线计划定稿后再冻结 | 现在冻结，变更走 §5 流程 |
 | Q19 | ~60 个错误码的三语文本现在写（P0-7）还是等界面显示错误时再写 | 现在写 |
@@ -410,8 +412,8 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 3. **P0-1**：Lua 无法列目录，“合并同一语言的全部文件”需要新绑定或清单（本文用 `sys.list_files`）；`bake_font.py` 只扫一层；M2 工作树有一份未跟踪的旧 `tools/i18n_check.py`，与 main 版本冲突。
 4. **C2**：M3 的 `commands.run` 返回三个值（`expedition` 的结果在第三个），`sim.command` 对 `end_day` 特判；`unknown_command:<kind>` 不是合法的 i18n 键；“域名即线名”与 P0-2 自己列的 `needs/craft/tech/night` 域不符，`equip/treat/activity` 也不在所列域中；spec 写成映射表，校验顺序不确定。
 5. **C1**：M3 的 `state.new` 没有 `world`、`outpost`、`endings`；顶层还有 `jobs/opts/model_acc/job_seq/log/errors` 未列归属；`VERSION = 1` 且没有迁移表（PLAN §4.5 要求有）。
-6. **C3**：M3 的 `sim/` 不用 `core/bus`，内部事件在 `state.log` 和 `clock.tick` 的返回值里（`new_day/phase/ending`）。
-7. **C6、C9、C8、C7**：分别与 NARRATIVE §2.4、NARRATIVE §2.7/WORLD §10、WORLD §1.3/§6.1、PLAN §4.4 不一致（Q1、Q2、Q9、Q16）。M3 的 `expedition.night(state, squad, hours)` 没有地点参数，机器人传的目标 `"suburb_house"` 在 `world.locations` 里不存在。
+6. **C3**（事件名现为扁平 snake_case，见 §9.5）：M3 的 `sim/` 不用 `core/bus`，内部事件在 `state.log` 和 `clock.tick` 的返回值里（`new_day/phase/ending`）。
+7. **C6、C9、C8、C7**：分别与 NARRATIVE §2.4、NARRATIVE §2.7/WORLD §10、WORLD §1.3/§6.1、PLAN §4.4 不一致（Q1、Q2、Q9、Q16；均已由 §9.5 回改，新名以 PARALLEL-PLAN §2 为准）。M3 的 `expedition.night(state, squad, hours)` 没有地点参数，机器人传的目标 `"suburb_house"` 在 `world.locations` 里不存在。
 8. **P0-5**：`day10_1200` 不是时段边界，`bot.play_day` 只支持 `stop_phase`，需要新增 `stop_minute`；`sys.save_*` 只能读写存档目录且名字限 `[a-z0-9_-]`，夹具读写只能用 `io.open`。
 9. **P0-6**：Lua 拿不到 `--dev`（`dev_mode` 只传给了热重载和开发控制台）；M2 用环境变量 `WS_SCENE` 进演示场景。
 10. **PANEL**：PANEL-PLAN 的 `ctx` 多一个 `fixture` 字段（是 C5 的超集，无害）；PANEL 新增的 `hint.*` 前缀不在 PARALLEL-PLAN 的区表里（本文归入 `ui` 区）；PANEL 的 `ui.*` 与主代理 `ui_common` 区共用前缀，所以区按文件归属而不按前缀。
@@ -464,7 +466,7 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 | PLAN §4.4 随机流 | `rng = { story, loot, combat, worldgen }` → 加 `health`、`weather`（与 `sim/state.lua` 的 `STREAMS` 一致）；NARRATIVE §2.9 的 `fx` 代码没有，仅在注释里列出 |
 | PLAN §4.4 事件 | `bus` 说明里的名字不变（`char_died`、`storylet_ready`、`snap_warning`），补指向 PARALLEL-PLAN C3 目录 |
 
-**待裁决（设计文档之间的矛盾，不由本节拍板；详见主代理报告）**：
+**待裁决（设计文档之间的矛盾，不由本节拍板；详见主代理报告）——已于文末“用户裁决（2026-11-14）”表全部裁定，下表“暂行写法”作废**：
 
 | # | 矛盾 | 暂行写法 |
 |---|---|---|
@@ -476,3 +478,16 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 | 6 | 事件名：PLAN §4.4 扁平 snake_case ↔ PARALLEL-PLAN C3 域前缀 | 三个设计名扁平，其余暂留 |
 | 7 | 动词表：NARRATIVE §2.4 列表无 `die`，WORLD §9.1 `psy_teammate_death` 用 `verb=die`；`break_in`/`intimidate`、`target` 的队友/势力格式设计文档未规定 | 加入 `die`；其余按上表 |
 | 8 | “夜袭难度”无英文字段名；facts 黑板里的 `loc.*` 与 `world.locations` 字段是派生视图还是各存一份（PLAN §4.4 vs WORLD §8） | `raid_difficulty`；字段同名 |
+
+**用户裁决（2026-11-14）**：以上 8 条全部采纳建议方案，已回改下列文档。此后以 PARALLEL-PLAN §2、NARRATIVE、WORLD 的现行写法为准；本文 §3.4、§7、§8 与上文改动表中的旧名字作废。
+
+| # | 结论 | 落点 |
+|---|---|---|
+| 1 | 地点 id = 原型 id：NARRATIVE 样例 `loc = "suburb_02"` 改 `"suburb_house"`；NARRATIVE 无其他 `suburb_NN` 写法（已全文检查） | NARRATIVE §2.4；PARALLEL-PLAN C8 |
+| 2 | 布局只用字母 `variant`（A/B）；WORLD §8 数字键 `loc.<id>.layout` 删除，改为 `loc.<id>.variant`（S，A/B） | WORLD §8；PARALLEL-PLAN C8 |
+| 3 | checkpoint_kilo 的 `occ = "hostile"`，“官方”身份由地点 id 与 `rep.kilo` 表达，不新增枚举；WORLD §6.1 表格“100（官方）”改 100，备注重写 | WORLD §6.1；PARALLEL-PLAN C8 |
+| 4 | `state` 只表示接触进度（unknown/known/visited/friendly/burned），hostile/empty 只在 `occ`；`alert` 为独立布尔字段；WORLD §9.3 的 `loc_state(.., "alert")`/`state="empty"` 改为 `loc_alert`/`loc_occ`，新增效果 `loc_occ`、`loc_alert` | WORLD §8、§9.3、文首 DSL 摘要；NARRATIVE §2.7 效果列表；PARALLEL-PLAN C8 |
+| 5 | 随机流保持代码的六个（`story/loot/combat/worldgen/health/weather`），`fx` 以后再加 | NARRATIVE §2.9（加注）；PLAN §4.4（上轮已改） |
+| 6 | 事件名全部扁平 snake_case，匹配 `^[a-z]+(_[a-z]+)*$`，全局唯一；P0 预置 11 个：`phase_changed day_started char_died char_wounded char_left_party char_joined_party station_changed room_temp_alert snap_warning storylet_ready raid_ended` | PARALLEL-PLAN C3；本文 §3.4 C3 目录与接线句；PLAN §4.4 本已是此写法，NARRATIVE/WORLD/UI-UX 无事件名引用 |
+| 7 | 动词表补 `die`；`break_in`、`intimidate` 不设动词：撬门入户 = `steal/rob` + 标签 `break_in`，威吓 = 标签 `armed_threat`；`target` 格式：具名 NPC `npc.<id>`、队友 = 角色 id、势力 `faction.<id>`（id 同 `rep.<faction>`）、整户 `loc.<地点 id>`、无对象 nil | NARRATIVE §2.4；PARALLEL-PLAN C6；本文 §3.4 C6 |
+| 8 | 字段名 `raid_difficulty`；`world.locations` 是唯一数据源，`loc.*` 事实由它派生、只读，写入走 `loc_state/loc_occ/loc_alert/loc_add/unlock_loc` | WORLD §8（末尾说明）；PARALLEL-PLAN C8 |

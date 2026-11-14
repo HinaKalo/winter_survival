@@ -71,9 +71,9 @@ P0 完成的标志：以上全部合入 main，主代理在 PLAN §6 记一笔�
 
 ### C3 事件（拥有者：发出方）
 
-- `core/bus.lua` 不变。事件名以设计文档（PLAN §4.4）为准：`char_died`、`storylet_ready`、`snap_warning`。设计文档尚未定名的事件，暂沿用 `<域>.<动作>` 写法（`clock.*`、`home.*`、`raid.*`、`world.*`），待设计文档补定后按设计文档改名（走 §5 流程）。
-- 目录 `sim/events.lua`：每个事件一行 `name = { fields... }`，按域分段；**只追加**，追加时写在自己域的段末尾（这样合并冲突只会是相邻行，手工解决很简单）。
-- P0 预置：`clock.phase_changed`、`clock.day_started`、`char_died`、`char.wounded`、`char.left_party`、`char.joined_party`、`home.station_changed`、`home.room_temp_alert`、`snap_warning`、`storylet_ready`、`raid.ended`。
+- `core/bus.lua` 不变。**事件名为 `^[a-z]+(_[a-z]+)*$` 的扁平 snake_case，全局唯一**（不带域前缀、不含点号；PLAN §4.4 的 `char_died`、`storylet_ready`、`snap_warning` 即此写法）。新事件名不得与已有名重复，也不得与某个域前缀的旧写法并存。
+- 目录 `sim/events.lua`：每个事件一行 `name = { fields... }`，按域分段（分段只是注释，不进名字）；**只追加**，追加时写在自己域的段末尾（这样合并冲突只会是相邻行，手工解决很简单）。
+- P0 预置（11 个）：`phase_changed`、`day_started`、`char_died`、`char_wounded`、`char_left_party`、`char_joined_party`、`station_changed`、`room_temp_alert`、`snap_warning`、`storylet_ready`、`raid_ended`。
 
 ### C4 查询层（拥有者：被查询子树的线）
 
@@ -96,10 +96,10 @@ P0 完成的标志：以上全部合入 main，主代理在 PLAN §6 记一笔�
 deeds.record(state, {
   verb = "steal" | "rob" | "assault" | "knockout" | "kill" | "spare" | "help" | "give"
        | "trade_fair" | "trade_cheat" | "refuse_help" | "abandon" | "betray"
-       | "rescue" | "bury" | "confess" | "return_goods" | "inform" | "die" | ...,  -- 动词表在 data/deed_kinds.lua，只追加；die 无动手者（WORLD §2.4）
+       | "rescue" | "bury" | "confess" | "return_goods" | "inform" | "die" | ...,  -- 动词表在 data/deed_kinds.lua，只追加；die 无动手者（WORLD §2.4）；没有 break_in、intimidate 动词，用标签 break_in、armed_threat 表达
   actor = char_id,                         -- 动手的人
   squad = { char_id... },                  -- 同行者（NARRATIVE §2.4 样例含 actor 自己）
-  target = "npc.<id>" | char_id | nil, target_kind = "civilian"|"raider"|"soldier"|"trader"|"teammate"|"nobody",
+  target = "npc.<id>" | char_id | "faction.<id>" | "loc.<id>" | nil, target_kind = "civilian"|"raider"|"soldier"|"trader"|"teammate"|"nobody",
   loc = location_id,
   tags = { occupied = true, victim_vulnerable = true, took_essentials = true, lethal = false, ... },  -- 标签表见 WORLD §2.2，只追加
   witnesses = { "npc.<id>"... },           -- 活着的目击者
@@ -126,9 +126,10 @@ P0 用 M3 `expedition` 的逻辑实现 `autoresolve` 的第一版，`begin/commi
 
 ```lua
 world.locations[id] = {
-  id, archetype, variant,                 -- id = 原型 id（WORLD §1.3）；布局变体（data/locations/<原型>.lua，格式见 M2-PLAN §2.1）
-  occ = "empty"|"civilian"|"trader"|"hostile",   -- 占用，WORLD §6.1、§8 的 loc.<id>.occ
-  state = "unknown"|"known"|"visited"|"hostile"|"empty"|"friendly"|"burned",   -- WORLD §8 的 loc.<id>.state
+  id, archetype, variant,                 -- id = 原型 id（WORLD §1.3，与 archetype 相同）；variant = 布局变体字母 "A"|"B"（data/locations/<原型>.lua，格式见 M2-PLAN §2.1；无数字 layout 字段）
+  occ = "empty"|"civilian"|"trader"|"hostile",   -- 占用，WORLD §6.1、§8 的 loc.<id>.occ；checkpoint_kilo 固定 hostile
+  state = "unknown"|"known"|"visited"|"friendly"|"burned",   -- 只表示接触进度（WORLD §8 的 loc.<id>.state）；hostile/empty 只属于 occ，不进 state
+  alert = bool,                           -- 戒备标志（WORLD §9.3），独立布尔，不是 state 取值
   unlocked = bool, unlock_day = n | nil, travel_min = n,   -- 单程分钟，WORLD §1.3；条件解锁（线索）的 unlock_day 为 nil
   raid_difficulty = 1..5,                 -- 夜袭难度，WORLD §6.1
   guard = 0..3, attitude = -3..3, food_days = n, members_alive = n, visits = n, looted = n,   -- WORLD §8 的 loc.<id>.*
@@ -138,6 +139,8 @@ world.locations[id] = {
   last_raided_day = n | nil,
 }
 ```
+
+`world.locations` 是地点数据的**唯一数据源**：facts 黑板里的 `loc.<id>.*`（WORLD §8）全部由它派生、只读，字段同名，不另存一份；写入走 `loc_state/loc_occ/loc_alert/loc_add/unlock_loc` 效果。
 
 RAID 只读这张表（加上 `raid.commit` 写回 `containers`、`doors`、`last_raided_day`）。RAID 在 WORLD 完成前用 `tests/fixtures/locations/*.lua` 手写的地点开发。
 
