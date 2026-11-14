@@ -63,19 +63,27 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // probe：在项目根用 Lua 探针脚本跑已安装的 exe（建议配合 -Dbackend=headless）
+    const rm_probe_saves = b.addSystemCommand(&.{
+        "python3", "-c", "import shutil, sys; shutil.rmtree(sys.argv[1], ignore_errors=True)", ".zig-cache/test-saves/probe",
+    });
     const probe_cmd = b.addRunArtifact(exe);
     probe_cmd.setCwd(b.path("."));
     probe_cmd.step.dependOn(b.getInstallStep());
-    probe_cmd.addArgs(&.{ "--probe", probe_file });
+    probe_cmd.step.dependOn(&rm_probe_saves.step);
+    probe_cmd.addArgs(&.{ "--save-dir", ".zig-cache/test-saves/probe", "--probe", probe_file });
     if (!probe_audio) probe_cmd.addArg("--no-audio");
     const probe_step = b.step("probe", "Run the headless CI probe (-Dprobe=FILE, -Dprobe-audio=false)");
     probe_step.dependOn(&probe_cmd.step);
 
     // luatest：无窗口 Lua 单元测试（--script tests/lua/main.lua --probe tests/lua/runner.lua --no-audio）
+    const rm_luatest_saves = b.addSystemCommand(&.{
+        "python3", "-c", "import shutil, sys; shutil.rmtree(sys.argv[1], ignore_errors=True)", ".zig-cache/test-saves/luatest",
+    });
     const luatest_cmd = b.addRunArtifact(exe);
     luatest_cmd.setCwd(b.path("."));
     luatest_cmd.step.dependOn(b.getInstallStep());
-    luatest_cmd.addArgs(&.{ "--script", "tests/lua/main.lua", "--probe", "tests/lua/runner.lua", "--no-audio" });
+    luatest_cmd.step.dependOn(&rm_luatest_saves.step);
+    luatest_cmd.addArgs(&.{ "--save-dir", ".zig-cache/test-saves/luatest", "--script", "tests/lua/main.lua", "--probe", "tests/lua/runner.lua", "--no-audio" });
     const luatest_step = b.step("luatest", "Run Lua unit tests in headless mode");
     luatest_step.dependOn(&luatest_cmd.step);
 

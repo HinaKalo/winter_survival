@@ -64,6 +64,9 @@ pub fn transform4(m: Mat4, v: Vec4) Vec4 {
     return Vec4.fromArray(r);
 }
 
+pub const iso_ppu: f32 = 90.50967; // 128 / sqrt(2)
+pub const iso_height_unit: f32 = 0.408248; // 1 / sqrt(6)
+
 pub const IsoCamera = struct {
     target: Vec3 = Vec3.zero,
     yaw: f32 = 45.0,
@@ -74,6 +77,9 @@ pub const IsoCamera = struct {
     min_zoom: f32 = 0.25,
     max_zoom: f32 = 4.0,
     view_height: f32 = 14.0,
+    pixels_per_unit: f32 = 0, // 0 = 旧 view_height 模式
+    snap_pixels: bool = false,
+    view_target: Vec3 = Vec3.zero,
     near: f32 = 0.1,
     far: f32 = 200.0,
     follow_smoothing: f32 = 8.0,
@@ -105,11 +111,20 @@ pub const IsoCamera = struct {
         return std.math.clamp(finiteOr(self.zoom, 1.0), r.lo, r.hi);
     }
 
-    pub fn eyePosition(self: *const IsoCamera) Vec3 {
+    pub fn effectivePpu(self: *const IsoCamera) f32 {
+        if (!std.math.isFinite(self.pixels_per_unit) or self.pixels_per_unit <= 0) return 0;
+        return @min(self.pixels_per_unit, 1.0e5);
+    }
+
+    fn eyeFor(self: *const IsoCamera, tgt: Vec3) Vec3 {
         const y = rad(finiteOr(self.yaw, 45.0));
         const p = rad(self.safePitch());
         const off = Vec3.new(@cos(p) * @sin(y), @sin(p), @cos(p) * @cos(y)).scale(self.safeDistance());
-        return self.target.add(off);
+        return tgt.add(off);
+    }
+
+    pub fn eyePosition(self: *const IsoCamera) Vec3 {
+        return self.eyeFor(self.target);
     }
 
     /// eye -> target 单位向量
@@ -170,11 +185,37 @@ pub const IsoCamera = struct {
     }
 
     fn halfExtents(self: *const IsoCamera) Vec2 {
+        const ppu = self.effectivePpu();
+        if (ppu > 0) {
+            const eff = ppu * self.safeZoom();
+            const hw = (self.safeViewport(self.viewport_w) * 0.5) / eff;
+            const hh = (self.safeViewport(self.viewport_h) * 0.5) / eff;
+            return Vec2.new(hw, hh);
+        }
         const vh = finiteOr(self.view_height, 14.0);
         const vh_ok = if (vh > 0) @min(vh, 1.0e6) else 14.0;
         const hh = vh_ok / (2.0 * self.safeZoom()); // safeZoom > 0
         const aspect = self.safeViewport(self.viewport_w) / self.safeViewport(self.viewport_h);
         return Vec2.new(hh * aspect, hh);
+    }
+
+    pub fn snapToPixel(self: *const IsoCamera, p: Vec3) Vec3 {
+        if (!vec3Finite(p)) return Vec3.zero;
+        const ppu_base = self.effectivePpu();
+        const ppu = if (ppu_base > 0)
+            ppu_base * self.safeZoom()
+        else
+            self.safeViewport(self.viewport_h) / (2.0 * self.halfExtents().y);
+        if (!std.math.isFinite(ppu) or ppu <= 0) return p;
+
+        const r = self.right();
+        const u = self.camUp();
+        const f = self.forward();
+        const sx = @round(p.dot(r) * ppu) / ppu;
+        const sy = @round(p.dot(u) * ppu) / ppu;
+        const sz = p.dot(f);
+        const out = r.scale(sx).add(u.scale(sy)).add(f.scale(sz));
+        return if (vec3Finite(out)) out else p;
     }
 
     pub fn update(self: *IsoCamera, viewport_w: f32, viewport_h: f32) void {
@@ -186,8 +227,9 @@ pub const IsoCamera = struct {
         self.target = clampWorld(self.target);
         if (!(std.math.isFinite(self.near) and self.near > 0)) self.near = 0.1;
         if (!(std.math.isFinite(self.far) and self.far > self.near)) self.far = self.near + 200.0;
+        self.view_target = if (self.snap_pixels) self.snapToPixel(self.target) else self.target;
         const he = self.halfExtents();
-        self.view = Mat4.lookat(self.eyePosition(), self.target, Vec3.up);
+        self.view = Mat4.lookat(self.eyeFor(self.view_target), self.view_target, Vec3.up);
         self.proj = Mat4.ortho(-he.x, he.x, -he.y, he.y, self.near, self.far);
     }
 
@@ -195,7 +237,8 @@ pub const IsoCamera = struct {
         const he = self.halfExtents();
         const ndc_x = sanitizeScreen(sx) / self.safeViewport(self.viewport_w) * 2.0 - 1.0;
         const ndc_y = 1.0 - sanitizeScreen(sy) / self.safeViewport(self.viewport_h) * 2.0;
-        const origin = self.eyePosition()
+        const base_tgt = if (self.snap_pixels) self.view_target else self.target;
+        const origin = self.eyeFor(base_tgt)
             .add(self.right().scale(ndc_x * he.x))
             .add(self.camUp().scale(ndc_y * he.y));
         return .{ .origin = origin, .dir = self.forward() };
@@ -480,4 +523,57 @@ test "garbage input: update / pitch / projections" {
     try std.testing.expect(cam.screenToPlane(1, 1, inf) == null);
     const m = billboardRotation(nan);
     for (m.m) |col| for (col) |v| try std.testing.expect(std.math.isFinite(v));
+}
+
+test "iso_ppu produces 128x64 tile diamond and 32px height unit" {
+    var cam = IsoCamera{
+        .yaw = 45.0,
+        .pitch = 30.0,
+        .pixels_per_unit = iso_ppu,
+        .snap_pixels = false,
+    };
+    cam.update(1280, 720);
+
+    const p00 = cam.worldToScreen(Vec3.new(0, 0, 0));
+    const p10 = cam.worldToScreen(Vec3.new(1, 0, 0));
+    const p01 = cam.worldToScreen(Vec3.new(0, 0, 1));
+    const p11 = cam.worldToScreen(Vec3.new(1, 0, 1));
+    const ph1 = cam.worldToScreen(Vec3.new(0, iso_height_unit, 0));
+
+    // Horizontal diamond width |p10.x - p01.x| == 128 px
+    try std.testing.expectApproxEqAbs(@as(f32, 128.0), @abs(p10.x - p01.x), 0.05);
+    // Vertical diamond height |p00.y - p11.y| == 64 px
+    try std.testing.expectApproxEqAbs(@as(f32, 64.0), @abs(p00.y - p11.y), 0.05);
+    // 1 height unit == 32 px vertically
+    try std.testing.expectApproxEqAbs(@as(f32, 32.0), @abs(p00.y - ph1.y), 0.05);
+}
+
+test "effectivePpu and snapToPixel" {
+    var cam = IsoCamera{ .pixels_per_unit = -5 };
+    try std.testing.expectEqual(@as(f32, 0), cam.effectivePpu());
+    cam.pixels_per_unit = std.math.nan(f32);
+    try std.testing.expectEqual(@as(f32, 0), cam.effectivePpu());
+
+    cam.pixels_per_unit = iso_ppu;
+    cam.snap_pixels = true;
+    cam.target = Vec3.new(1.2345, 0.123, 2.3456);
+    cam.update(1280, 720);
+
+    // snapToPixel is idempotent
+    const s1 = cam.snapToPixel(cam.target);
+    const s2 = cam.snapToPixel(s1);
+    try approx(s1.x, s2.x);
+    try approx(s1.y, s2.y);
+    try approx(s1.z, s2.z);
+
+    // view_target matches snapped target
+    try approx(cam.view_target.x, s1.x);
+    try approx(cam.view_target.y, s1.y);
+    try approx(cam.view_target.z, s1.z);
+
+    // Non-finite input returns zero
+    const sz = cam.snapToPixel(Vec3.new(std.math.nan(f32), 0, 0));
+    try approx(sz.x, 0);
+    try approx(sz.y, 0);
+    try approx(sz.z, 0);
 }

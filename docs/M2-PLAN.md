@@ -77,7 +77,7 @@ return {
 | X4 | `vision.zig` | sonnet | X3 | | A5 vision |
 | X7 | `world.zig` 代数 id、字段、pick、path 256 | sonnet | X3 | | A5 world |
 | L2 | `view/facing.lua` + 单测（ART-AUDIO §5.6；轴向→斜向映射对照 `world.zig` 的 `last_move` 与 `camera.zig` 的 yaw 推导，写进测试注释，PLAN §10 A2） | sonnet | X2 | `view/facing.lua`、`tests/lua/test_facing.lua` | 8 个移动方向 + 滞回 + 帧号公式全覆盖 |
-| L3 | `view/mapbuild.lua` 的 `plan()`（纯） | sonnet | L1 | | luatest：两种模式的墙高、内外墙判定、门窗 flags、屋顶范围、void；同输入输出逐字节相同 |
+| L3 | `core/layout.lua`（纯：模板解析、图例合并、内外墙判定、房间划分（被墙和门隔开的连通区域）、每个房间的格数/外墙段数/窗/门/相邻房间）+ `view/mapbuild.lua` 的 `plan()`（纯，在 layout 结果上加高度、屋顶、模式规则） | sonnet | L1 | | luatest：两种模式的墙高、内外墙判定、门窗 flags、屋顶范围、void、房间划分；同输入输出逐字节相同。`core/layout.lua` 同时供 M3 的 `sim/home.lua`、`sim/thermal.lua` 使用（sim 不能 require view），所以它不得 require `view/` 或引擎库 |
 | X5 | `lightmap.zig` | sonnet | X4 | | A5 lightmap |
 | X6 | `tilemesh.zig` + `overlay.zig` | sonnet | X5 | | A5 两组 |
 | X8 | `render.zig` 分块/覆盖层/精灵 + `engine.zig` 胶水 | sonnet | X2, X6, X7 | | ENGINE-PLAN X8；A7.1 第 1–3 条的自检与计数器 |
