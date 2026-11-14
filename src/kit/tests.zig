@@ -7,4 +7,6 @@ test {
     std.testing.refAllDecls(@import("ui_geom.zig"));
     std.testing.refAllDecls(@import("pad_logic.zig"));
     std.testing.refAllDecls(@import("save_name.zig"));
+    std.testing.refAllDecls(@import("launch_args.zig"));
+    std.testing.refAllDecls(@import("file_paths.zig"));
 }

@@ -3,7 +3,7 @@ const delve = @import("delve");
 const iso = @import("iso");
 const kit = @import("kit");
 
-const usage = "usage: winter_survival [--probe <file.lua>] [--script <file.lua>] [--save-dir <dir>] [--no-audio] [--dev]\n";
+const usage = "usage: winter_survival [--probe <file.lua>] [--script <file.lua>] [--save-dir <dir>] [--no-audio] [--dev] [--scene <name>] [--fixture <name>]\n";
 
 var probe_buf: [1024]u8 = undefined;
 var script_buf: [1024]u8 = undefined;
@@ -14,9 +14,7 @@ pub fn main(init: std.process.Init) !void {
     try delve.init(init, delve.mem.createDefaultAllocator());
     const allocator = delve.mem.getAllocator();
 
-    // CLI：[--probe <file.lua>] [--script <file.lua>] [--save-dir <dir>] [--no-audio] [--dev]
-    // 路径放静态缓冲：delve 的 DebugAllocator 在 app.start 内部就已 deinit，
-    // 之后再 free 会出问题，且泄漏检查也会提前触发。
+    // Copy parsed values before the argument iterator releases its storage.
     var probe_path: ?[:0]const u8 = null;
     var main_script: [:0]const u8 = "assets/main.lua";
     var save_dir: ?[:0]const u8 = null;
@@ -25,53 +23,29 @@ pub fn main(init: std.process.Init) !void {
     {
         var it = try init.minimal.args.iterateAllocator(allocator);
         defer it.deinit();
-        _ = it.skip(); // argv[0]
-        while (it.next()) |arg| {
-            if (std.mem.eql(u8, arg, "--no-audio")) {
-                no_audio = true;
-            } else if (std.mem.eql(u8, arg, "--dev")) {
-                dev_mode = true;
-            } else if (std.mem.eql(u8, arg, "--probe")) {
-                const path = it.next() orelse {
-                    std.debug.print("--probe needs a file argument\n{s}", .{usage});
-                    return error.BadArguments;
-                };
-                if (path.len >= probe_buf.len) {
-                    std.debug.print("--probe path too long\n", .{});
-                    return error.BadArguments;
-                }
-                @memcpy(probe_buf[0..path.len], path);
-                probe_buf[path.len] = 0;
-                probe_path = probe_buf[0..path.len :0];
-            } else if (std.mem.eql(u8, arg, "--script")) {
-                const path = it.next() orelse {
-                    std.debug.print("--script needs a file argument\n{s}", .{usage});
-                    return error.BadArguments;
-                };
-                if (path.len >= script_buf.len) {
-                    std.debug.print("--script path too long\n", .{});
-                    return error.BadArguments;
-                }
-                @memcpy(script_buf[0..path.len], path);
-                script_buf[path.len] = 0;
-                main_script = script_buf[0..path.len :0];
-            } else if (std.mem.eql(u8, arg, "--save-dir")) {
-                const path = it.next() orelse {
-                    std.debug.print("--save-dir needs a directory argument\n{s}", .{usage});
-                    return error.BadArguments;
-                };
-                if (path.len >= save_dir_buf.len) {
-                    std.debug.print("--save-dir path too long\n", .{});
-                    return error.BadArguments;
-                }
-                @memcpy(save_dir_buf[0..path.len], path);
-                save_dir_buf[path.len] = 0;
-                save_dir = save_dir_buf[0..path.len :0];
-            } else {
-                std.debug.print("unknown argument: {s}\n{s}", .{ arg, usage });
-                return error.BadArguments;
-            }
-        }
+        _ = it.skip();
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(allocator);
+        while (it.next()) |arg| try args.append(allocator, arg);
+        const opts = kit.launch_args.parse(args.items) catch {
+            std.debug.print("{s}", .{usage});
+            return error.BadArguments;
+        };
+        if (opts.probe) |p| probe_path = copyArg(&probe_buf, p) catch {
+            std.debug.print("{s}", .{usage});
+            return error.BadArguments;
+        };
+        if (opts.script) |p| main_script = copyArg(&script_buf, p) catch {
+            std.debug.print("{s}", .{usage});
+            return error.BadArguments;
+        };
+        if (opts.save_dir) |p| save_dir = copyArg(&save_dir_buf, p) catch {
+            std.debug.print("{s}", .{usage});
+            return error.BadArguments;
+        };
+        no_audio = opts.no_audio;
+        dev_mode = opts.dev;
+        kit.sys.configureLaunch(opts.dev, opts.scene, opts.fixture);
     }
     if (save_dir) |d| {
         kit.sys.configure(d);
@@ -115,4 +89,11 @@ pub fn main(init: std.process.Init) !void {
         kit.probe.stopWatchdog();
         try kit.probe.result();
     }
+}
+
+fn copyArg(buffer: []u8, value: []const u8) error{BadArguments}![:0]const u8 {
+    if (value.len >= buffer.len) return error.BadArguments;
+    @memcpy(buffer[0..value.len], value);
+    buffer[value.len] = 0;
+    return buffer[0..value.len :0];
 }

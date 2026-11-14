@@ -8,6 +8,7 @@ const mem = delve.mem;
 const zlua = @import("zlua");
 
 const save_name = @import("save_name.zig");
+const file_paths = @import("file_paths.zig");
 
 const max_save_bytes: usize = 8 * 1024 * 1024;
 var save_dir_buf: [512]u8 = undefined;
@@ -35,8 +36,28 @@ pub fn configure(dir: []const u8) void {
     dir_initialized = true;
 }
 
+var launch_dev = false;
+var launch_scene_buf: [32]u8 = undefined;
+var launch_scene_len: usize = 0;
+var launch_fixture_buf: [32]u8 = undefined;
+var launch_fixture_len: usize = 0;
+
+pub fn configureLaunch(dev: bool, scene: ?[]const u8, fixture: ?[]const u8) void {
+    launch_dev = dev;
+    launch_scene_len = 0;
+    launch_fixture_len = 0;
+    if (scene) |v| if (save_name.isValid(v)) {
+        @memcpy(launch_scene_buf[0..v.len], v);
+        launch_scene_len = v.len;
+    };
+    if (fixture) |v| if (save_name.isValid(v)) {
+        @memcpy(launch_fixture_buf[0..v.len], v);
+        launch_fixture_len = v.len;
+    };
+}
+
 pub fn bind(lua: *lua_util.Lua) void {
-    lua.createTable(0, 7);
+    lua.createTable(0, 9);
     setFn(lua, "save_write", zlua.wrap(l_saveWrite));
     setFn(lua, "save_read", zlua.wrap(l_saveRead));
     setFn(lua, "save_list", zlua.wrap(l_saveList));
@@ -44,6 +65,8 @@ pub fn bind(lua: *lua_util.Lua) void {
     setFn(lua, "save_exists", zlua.wrap(l_saveExists));
     setFn(lua, "lua_heap", zlua.wrap(l_luaHeap));
     setFn(lua, "platform", zlua.wrap(l_platform));
+    setFn(lua, "launch_opts", zlua.wrap(l_launchOpts));
+    setFn(lua, "list_files", zlua.wrap(l_listFiles));
     lua.setGlobal("sys");
 }
 
@@ -238,4 +261,69 @@ fn l_luaHeap(lua: *zlua.Lua) i32 {
 fn l_platform(lua: *zlua.Lua) i32 {
     _ = lua.pushString(@tagName(builtin.os.tag));
     return 1;
+}
+
+fn l_launchOpts(lua: *zlua.Lua) i32 {
+    lua.createTable(0, 3);
+    lua.pushBoolean(launch_dev);
+    lua.setField(-2, "dev");
+    if (launch_scene_len > 0) _ = lua.pushString(launch_scene_buf[0..launch_scene_len]) else lua.pushNil();
+    lua.setField(-2, "scene");
+    if (launch_fixture_len > 0) _ = lua.pushString(launch_fixture_buf[0..launch_fixture_len]) else lua.pushNil();
+    lua.setField(-2, "fixture");
+    return 1;
+}
+
+fn l_listFiles(lua: *zlua.Lua) i32 {
+    const root = lua.toString(1) catch return badDir(lua);
+    if (!file_paths.validDir(root)) return badDir(lua);
+    const suffix = lua.toString(2) catch "";
+    const io = delve.io.getIo();
+    var dir = std.Io.Dir.cwd().openDir(io, root, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound) {
+            lua.createTable(0, 0); // missing directory: empty list (P0-PLAN 3.0)
+            return 1;
+        }
+        return ioError(lua);
+    };
+    defer dir.close(io);
+    const alloc = mem.getAllocator();
+    var paths: std.ArrayList([]u8) = .empty;
+    defer {
+        for (paths.items) |path| alloc.free(path);
+        paths.deinit(alloc);
+    }
+    var walker = dir.walk(alloc) catch return ioError(lua);
+    defer walker.deinit();
+    while (true) {
+        const entry = (walker.next(io) catch return ioError(lua)) orelse break;
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, suffix)) continue;
+        const path = std.fmt.allocPrint(alloc, "{s}/{s}", .{ root, entry.path }) catch return ioError(lua);
+        for (path) |*c| if (c.* == '\\') {
+            c.* = '/';
+        };
+        paths.append(alloc, path) catch {
+            alloc.free(path);
+            return ioError(lua);
+        };
+    }
+    file_paths.sort(paths.items);
+    lua.createTable(0, 0);
+    for (paths.items, 0..) |path, i| {
+        _ = lua.pushString(path);
+        lua.rawSetIndex(-2, @intCast(i + 1));
+    }
+    return 1;
+}
+
+fn ioError(lua: *zlua.Lua) i32 {
+    lua.pushNil();
+    _ = lua.pushString("io_error");
+    return 2;
+}
+
+fn badDir(lua: *zlua.Lua) i32 {
+    lua.pushNil();
+    _ = lua.pushString("bad_dir");
+    return 2;
 }
