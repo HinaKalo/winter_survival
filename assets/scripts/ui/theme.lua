@@ -20,8 +20,23 @@ M.colors = {
   danger   = { 0xD8 / 255, 0x45 / 255, 0x3A / 255, 1.00 },
   ok       = { 0x7F / 255, 0xAE / 255, 0x6A / 255, 1.00 },
   cold     = { 0x8F / 255, 0xC3 / 255, 0xE0 / 255, 1.00 },
+  -- Dark label colour for text drawn over a bright fill (progress bars).
+  text_on_fill = { 0x12 / 255, 0x15 / 255, 0x19 / 255, 1.00 },
   disabled = { 0x5B / 255, 0x64 / 255, 0x6C / 255, 1.00 },
   white    = { 1, 1, 1, 1 },
+}
+
+-- Layout constants owned by PANEL (PARALLEL-PLAN §2 C5). HOME/RAID read only.
+M.layout = {
+  safe_margin = 16,
+  hintbar = { x = 0, y = -28, w = 1280, h = 28 },
+  panel_max = { w = 1152, h = 640, margin = 32 },
+  avatar_card = { w = 176, h = 72, gap = 4 },
+  selected_panel = { w = 480, h = 136 },
+  slot = 48,
+  slot_gap = 4,
+  list_row = 40,
+  glyph = 24,
 }
 
 M.skin_rects = {

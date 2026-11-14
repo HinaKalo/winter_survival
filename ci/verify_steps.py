@@ -8,11 +8,15 @@ Runs, collecting failures instead of stopping at the first one:
   one `zig build probe -Dbackend=headless -Dprobe=FILE` per selected probe (-> probe_<name>.log/.xml via
   probe_junit); `zig build balance` (full profile, only if build.zig has the step).
 Each plain step writes <step>.log and <step>.xml (one JUnit testcase). Exit 1 if anything failed.
+Before every verdict (pass or fail), copies the balance report and fixtures into the log dir via
+collect_outputs: out/balance/report.json -> balance/report.json, tests/fixtures/*.sav and
+tests/fixtures/manifest.lua -> fixtures/ (missing sources are skipped).
 """
 import argparse
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -50,6 +54,30 @@ def select_probes(spec, profile, root="."):
     if not found:
         raise ValueError("no probes selected (spec=%r, profile=%s)" % (spec or DEFAULT_PROBES, profile))
     return found
+
+
+def collect_outputs(root, log_dir):
+    """Copy the balance report and fixtures from root into log_dir (byte-for-byte, missing sources
+    skipped). Returns the copied paths relative to log_dir (forward slashes, sorted)."""
+    fx = os.path.join(root, "tests", "fixtures")
+    pairs = [(os.path.join(root, "out", "balance", "report.json"), "balance/report.json")]
+    for src in sorted(glob.glob(os.path.join(glob.escape(fx), "*.sav"))):
+        pairs.append((src, "fixtures/" + os.path.basename(src)))
+    pairs.append((os.path.join(fx, "manifest.lua"), "fixtures/manifest.lua"))
+    copied = []
+    for src, rel in pairs:
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(log_dir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copyfile(src, dst)
+        copied.append(rel)
+    return sorted(copied)
+
+
+def _collect_and_report(log_dir):
+    got = collect_outputs(".", log_dir)
+    print("collected: %s" % (", ".join(got) or "(none)"), flush=True)
 
 
 def write_step_junit(path, suite, name, seconds, rc, log_tail):
@@ -112,6 +140,7 @@ def main(argv=None):
         print("VERIFY FAILED: probe selection: %s" % e)
         write_step_junit(os.path.join(a.log_dir, "probe_selection.xml"), "probe_selection",
                          "select probes", 0.0, 1, str(e))
+        _collect_and_report(a.log_dir)
         return 1
     print("probes (%s): %s" % (a.profile, ", ".join(probes) or "(none)"), flush=True)
     for p in probes:
@@ -129,6 +158,7 @@ def main(argv=None):
         if run_plain(a.zig, bargs, a.log_dir, "balance", "balance", "zig build balance"):
             failures.append("balance")
 
+    _collect_and_report(a.log_dir)
     if failures:
         print("VERIFY FAILED: " + "; ".join(failures))
         return 1
