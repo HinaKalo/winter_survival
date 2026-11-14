@@ -49,6 +49,16 @@ function M.plan(template, opts)
 	assert(mode == "exterior" or mode == "cutaway", "mapbuild.plan: bad mode " .. tostring(mode))
 	local exterior = (mode == "exterior")
 
+	-- opts.level ("B1" / "F2"): plan that level of a multi-storey template instead of the main floor
+	local level_def
+	if opts.level and opts.level ~= "F1" then
+		local vdef = template.variants and template.variants[variant]
+		level_def = vdef and vdef.levels and vdef.levels[opts.level]
+		if not level_def then
+			error(string.format("mapbuild.plan: template has no level %q", tostring(opts.level)), 2)
+		end
+		template = level_def
+	end
 	local parsed, err = layout.parse(template, variant, { strict = opts.strict })
 	if not parsed then
 		error(string.format("mapbuild.plan: layout.parse failed for template %q variant %q: %s",

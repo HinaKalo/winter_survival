@@ -191,6 +191,7 @@ local M = {
   thermal = {
     step_minutes = 5, -- aggregate thermal/power/humidity to keep 500-run batches fast
     heat_capacity = 12, -- Wh per C per cell
+    ground_temp = 4, -- C; solid envelope of below-grade rooms exchanges heat with this (M5-3D)
     -- W per C. Envelope items are per edge cell unless noted.
     g = {
       wall = 2.0,
@@ -204,6 +205,7 @@ local M = {
       inner_wall = 0.5,
       inner_door_closed = 0.9,
       inner_door_open = 7.0,
+      stair_open = 8.0, -- open stair well between two floors, per link (M5-3D)
     },
     insulation_mult = { [0] = 1.0, [1] = 0.7, [2] = 0.5 },
     cold_cell_mult = 0.8, -- extra insulation of the cold cell, applied on top of II

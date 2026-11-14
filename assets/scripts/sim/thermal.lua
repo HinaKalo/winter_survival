@@ -27,27 +27,32 @@ function M.link_g(link)
   -- the cold cell has its own closed-door value (CONTENT 5.3)
   local closed_g = link.cold_cell and T.cold_cell_door_g or T.g.inner_door_closed
   return walls * T.g.inner_wall + (doors - open) * closed_g + open * T.g.inner_door_open
+    + (link.stairs or 0) * (T.g.stair_open or 0)
 end
 
 -- Envelope-only conductance of a room to the outdoors (W/C). Inner links are NOT included
 -- (CONTENT 6.2.1: Q_out = sum G_link (T - T_nb) + G_env (T - T_out)).
 -- Insulation multiplies walls, boards and roof/floor only; doors, windows and holes are unaffected.
-function M.room_g(state, room_id)
+-- Returns total, solid: `solid` is the walls / boards / roof-floor part; in a ground room (below
+-- grade) that part exchanges heat with the ground instead of the outdoor air (M5-3D §4.2).
+function M.room_g_parts(state, room_id)
   local room = state.home.rooms[room_id]
-  if not room then return 0 end
+  if not room then return 0, 0 end
   local env = room.envelope
   local mult = insulation_mult(room)
   if room.cold_cell then mult = mult * (T.cold_cell_mult or 1.0) end
-  local g = 0
-  g = g + env.wall * T.g.wall * mult
-  g = g + env.board * T.g.board * mult
-  g = g + (room.area or 0) * T.g.roof_floor * mult
+  local solid = env.wall * T.g.wall * mult + env.board * T.g.board * mult + (room.area or 0) * T.g.roof_floor * mult
+  local g = solid
   g = g + env.hole * T.g.hole
   g = g + env.window * T.g.window
   g = g + env.broken_window * T.g.broken_window
   g = g + env.door * T.g.door_closed
   g = g + env.door_open * T.g.door_open
-  return g
+  return g, solid
+end
+
+function M.room_g(state, room_id)
+  return (M.room_g_parts(state, room_id))
 end
 
 function M.heat_capacity(state, room_id)
@@ -102,7 +107,13 @@ function M.tick(state, minutes)
   for _, rid in ipairs(rooms) do
     local room = state.home.rooms[rid]
     local q_in = M.station_heat(state, rid) + M.body_heat(state, rid)
-    local q_out = M.room_g(state, rid) * (temps[rid] - out)
+    local g_all, g_solid = M.room_g_parts(state, rid)
+    local q_out
+    if room.ground then
+      q_out = (g_all - g_solid) * (temps[rid] - out) + g_solid * (temps[rid] - T.ground_temp)
+    else
+      q_out = g_all * (temps[rid] - out)
+    end
     for _, link in ipairs(room.links or {}) do
       local nb = temps[link.room]
       if nb then q_out = q_out + M.link_g(link) * (temps[rid] - nb) end

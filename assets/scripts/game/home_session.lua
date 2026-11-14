@@ -13,6 +13,7 @@ local recipes = require("data.recipes")
 local tech_data = require("data.tech")
 local serialize = require("core.serialize")
 local util = require("core.util")
+local floors = require("game.floors")
 
 local M = {}
 
@@ -97,8 +98,11 @@ end
 local function avg_room_temp(state)
   local sum, n = 0, 0
   for _, rid in ipairs(state.home.room_order) do
-    sum = sum + state.home.rooms[rid].temp
-    n = n + 1
+    local room = state.home.rooms[rid]
+    if room.floor == nil or room.floor == "F1" then -- 1F only: keeps the report numbers stable
+      sum = sum + room.temp
+      n = n + 1
+    end
   end
   return n > 0 and sum / n or 0
 end
@@ -272,6 +276,18 @@ function M.actions(s, cid)
       add_action(list, "toggle:" .. sid, "toggle", "station." .. sid .. ".name", ok, err)
     end
   end
+
+  -- move orders go last so the default menu focus is unchanged
+  local can_move, why = in_day, "not_day"
+  if in_day then
+    if ch.activity == "sleep" then can_move, why = false, "asleep"
+    elseif ch.activity == "out" then can_move, why = false, "away" end
+  end
+  for _, rid in ipairs(state.home.room_order) do
+    if rid ~= ch.room then
+      add_action(list, "move:" .. rid, "move", "home.room." .. rid, can_move, why)
+    end
+  end
   return list
 end
 
@@ -304,6 +320,8 @@ function M.act(s, cid, action_id)
     if ok and state.party.chars[cid].job then
       ok, err = run(state, { kind = "home.set_activity", char = cid, value = "work" })
     end
+  elseif entry.kind == "move" then
+    ok, err = run(state, { kind = "assign", char = cid, room = action_id:sub(6) })
   elseif entry.kind == "toggle" then
     local sid = action_id:sub(8)
     ok, err = run(state, { kind = "home.toggle", station = sid, on = not state.home.stations[sid].on })
@@ -338,13 +356,14 @@ function M.hud(s)
     chars = {},
   }
   for _, rid in ipairs(state.home.room_order) do
-    h.rooms[#h.rooms + 1] = { id = rid, temp = state.home.rooms[rid].temp }
+    h.rooms[#h.rooms + 1] = { id = rid, temp = state.home.rooms[rid].temp, floor = state.home.rooms[rid].floor or "F1" }
   end
   for _, cid in ipairs(state.party.order) do
     local ch = state.party.chars[cid]
     h.chars[#h.chars + 1] = {
       id = cid,
       name = name_key(cid),
+      floor = floors.of_room(state, ch.room) or "F1",
       activity = ch.activity,
       job = job_label(state, ch),
       hp = ch.health.hp,

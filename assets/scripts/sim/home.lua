@@ -36,6 +36,15 @@ end
 
 local function key(x, y) return tostring(x) .. "," .. tostring(y) end
 
+-- structure map key of an opening: 1F keeps the plain "x,y"; other floors are prefixed so cells
+-- of different floors never collide.
+local function okey(op)
+  if op.floor then return op.floor .. ":" .. key(op.x, op.y) end
+  return key(op.x, op.y)
+end
+
+local LEVEL_ORDER = { "B1", "F2" }
+
 function M.station_kind(id)
   return STATION_KIND[id] or STATION_KIND["f_" .. tostring(id)] or id
 end
@@ -71,55 +80,89 @@ function M.init(state, opts)
   }
 
   local cold_start = weather.outdoor_temp(state) + balance.thermal.initial_temp_offset
-  for _, id in ipairs(layout.room_order) do
-    local lr = layout.rooms[id]
-    local room = {
-      id = id,
-      name = "room." .. id .. ".name",
-      area = lr.area,
-      temp = cold_start,
-      insulation = balance.thermal.reference_insulation or 0,
-      frost = 100,
-      envelope = { wall = 0, hole = 0, window = 0, broken_window = 0, board = 0, door = 0, door_open = 0 },
-      openings = {},
-      links = {},
-      cold_cell = false,
-    }
-    for _, op in ipairs(lr.openings) do
-      room.openings[#room.openings + 1] = { kind = op.kind, x = op.x, y = op.y }
-    end
-    -- layout links are one entry per kind (door / wall); merge them per neighbour room
-    local by_room = {}
-    for _, link in ipairs(lr.links) do
-      local l = by_room[link.room]
-      if not l then
-        l = { room = link.room, walls = 0, doors = 0, door_cells = {}, open_doors = 0 }
-        by_room[link.room] = l
-        room.links[#room.links + 1] = l
+
+  -- floor: "F1" for the main layout (openings keep plain keys), "B1" / "F2" for extra levels
+  local function add_rooms(lay, floor, ground)
+    local fkey = floor ~= "F1" and floor or nil
+    for _, id in ipairs(lay.room_order) do
+      local lr = lay.rooms[id]
+      if state.home.rooms[id] then return nil, "duplicate room id " .. id end
+      local room = {
+        id = id,
+        name = "room." .. id .. ".name",
+        area = lr.area,
+        temp = cold_start,
+        insulation = balance.thermal.reference_insulation or 0,
+        frost = 100,
+        envelope = { wall = 0, hole = 0, window = 0, broken_window = 0, board = 0, door = 0, door_open = 0 },
+        openings = {},
+        links = {},
+        cold_cell = false,
+        floor = floor,
+        ground = ground and true or nil,
+      }
+      for _, op in ipairs(lr.openings) do
+        room.openings[#room.openings + 1] = { kind = op.kind, x = op.x, y = op.y, floor = fkey }
       end
-      if link.kind == "door" then
-        l.doors = l.doors + link.count
-        for _, c in ipairs(link.cells or {}) do l.door_cells[#l.door_cells + 1] = { x = c.x, y = c.y, kind = c.kind } end
-      else
-        l.walls = l.walls + link.count
+      -- layout links are one entry per kind (door / wall); merge them per neighbour room
+      local by_room = {}
+      for _, link in ipairs(lr.links) do
+        local l = by_room[link.room]
+        if not l then
+          l = { room = link.room, walls = 0, doors = 0, door_cells = {}, open_doors = 0 }
+          by_room[link.room] = l
+          room.links[#room.links + 1] = l
+        end
+        if link.kind == "door" then
+          l.doors = l.doors + link.count
+          for _, c in ipairs(link.cells or {}) do
+            l.door_cells[#l.door_cells + 1] = { x = c.x, y = c.y, kind = c.kind, floor = fkey }
+          end
+        else
+          l.walls = l.walls + link.count
+        end
+      end
+      table.sort(room.links, function(a, b) return a.room < b.room end)
+      state.home.rooms[id] = room
+      state.home.room_order[#state.home.room_order + 1] = id
+    end
+    for _, op in ipairs(lay.openings) do
+      local o = { kind = op.kind, x = op.x, y = op.y, floor = fkey, outer = op.outer }
+      local k = okey(o)
+      if op.kind == "window" then
+        state.home.structure.windows[k] = { x = op.x, y = op.y, floor = fkey, broken = false, boarded = false }
+      elseif op.kind == "wall" then
+        state.home.structure.holes[k] = { x = op.x, y = op.y, floor = fkey, boarded = false, damaged = false }
+      elseif op.kind == "door" then
+        state.home.structure.doors[k] = { x = op.x, y = op.y, floor = fkey, open = false, outer = op.outer and true or false }
       end
     end
-    table.sort(room.links, function(a, b) return a.room < b.room end)
-    state.home.rooms[id] = room
-    state.home.room_order[#state.home.room_order + 1] = id
+    return true
+  end
+
+  local ok_rooms, rerr = add_rooms(layout, "F1", false)
+  if not ok_rooms then return nil, rerr end
+  local variant_def = (tmpl.variants or {})[layout.variant] or {}
+  for _, f in ipairs(LEVEL_ORDER) do
+    local lv = variant_def.levels and variant_def.levels[f]
+    if lv then
+      local lay, lerr = layout_parser.parse(lv)
+      if not lay then return nil, lerr end
+      local okl, e2 = add_rooms(lay, f, lv.ground)
+      if not okl then return nil, e2 end
+    end
+  end
+  -- stair links: symmetric thermal connection between the two rooms (no wall, no door)
+  for _, st in ipairs(variant_def.stairs or {}) do
+    local a, b = state.home.rooms[st.lower_room], state.home.rooms[st.upper_room]
+    if a and b then
+      a.links[#a.links + 1] = { room = b.id, walls = 0, doors = 0, door_cells = {}, open_doors = 0, stairs = 1 }
+      b.links[#b.links + 1] = { room = a.id, walls = 0, doors = 0, door_cells = {}, open_doors = 0, stairs = 1 }
+      table.sort(a.links, function(p, q) return p.room < q.room end)
+      table.sort(b.links, function(p, q) return p.room < q.room end)
+    end
   end
   table.sort(state.home.room_order)
-
-  for _, op in ipairs(layout.openings) do
-    local k = key(op.x, op.y)
-    if op.kind == "window" then
-      state.home.structure.windows[k] = { x = op.x, y = op.y, broken = false, boarded = false }
-    elseif op.kind == "wall" then
-      state.home.structure.holes[k] = { x = op.x, y = op.y, boarded = false, damaged = false }
-    elseif op.kind == "door" then
-      state.home.structure.doors[k] = { x = op.x, y = op.y, open = false, outer = op.outer and true or false }
-    end
-  end
 
   local damage = layout.damage or {}
   for _, p in ipairs(damage.broken_windows or {}) do
@@ -216,7 +259,7 @@ function M.boardable_window(state, room_id)
   if not room then return nil end
   for _, op in ipairs(room.openings) do
     if op.kind == "window" then
-      local w = state.home.structure.windows[key(op.x, op.y)]
+      local w = state.home.structure.windows[okey(op)]
       if w and not w.boarded then return w end
     end
   end
@@ -228,7 +271,7 @@ function M.boardable_hole(state, room_id)
   if not room then return nil end
   for _, op in ipairs(room.openings) do
     if op.kind == "wall" then
-      local h = state.home.structure.holes[key(op.x, op.y)]
+      local h = state.home.structure.holes[okey(op)]
       if h and h.damaged and not h.boarded then return h end
     end
   end
@@ -271,6 +314,7 @@ function M.add_cold_cell(state)
     openings = {},
     links = { { room = h.default_room, walls = 0, doors = 1, door_cells = {}, open_doors = 0, cold_cell = true } },
     cold_cell = true,
+    floor = host.floor,
   }
   -- mirror link so the host room exchanges heat with the cell too
   host.links[#host.links + 1] = { room = cc.id, walls = 0, doors = 1, door_cells = {}, open_doors = 0, cold_cell = true }
@@ -291,7 +335,7 @@ function M.rebuild(state)
     else
       local env = { wall = 0, hole = 0, window = 0, broken_window = 0, board = 0, door = 0, door_open = 0 }
       for _, op in ipairs(room.openings) do
-        local k = key(op.x, op.y)
+        local k = okey(op)
         if op.kind == "wall" then
           local hole = h.structure.holes[k]
           if hole and hole.damaged then
@@ -319,7 +363,7 @@ function M.rebuild(state)
       local open = 0
       for _, cell in ipairs(link.door_cells) do
         if cell.kind == "door" then
-          local d = h.structure.doors[key(cell.x, cell.y)]
+          local d = h.structure.doors[okey(cell)]
           if d and d.open then open = open + 1 end
         end
       end

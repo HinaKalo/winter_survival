@@ -143,6 +143,11 @@ M.ACTIONS = {
     defaults = { keyboard = { kb(K.X) }, mouse = {}, pad = {} } },
   { id = "camera_center", ctx = "W", rebindable = true, screen = { mouse = true }, hold = HOLD_PAD,
     defaults = { keyboard = { kb(K.HOME) }, mouse = {}, pad = { pb(PB.r3) } } },
+  -- M5-3D: switch the viewed floor of a multi-storey home (floor tabs on screen for the mouse).
+  { id = "floor_up", ctx = "W", rebindable = true, screen = { mouse = true }, na = { pad = true },
+    defaults = { keyboard = { kb(K.PAGE_UP) }, mouse = {}, pad = {} } },
+  { id = "floor_down", ctx = "W", rebindable = true, screen = { mouse = true }, na = { pad = true },
+    defaults = { keyboard = { kb(K.PAGE_DOWN) }, mouse = {}, pad = {} } },
   { id = "show_overlay_info", ctx = "R", rebindable = true, screen = { mouse = true, pad = true },
     defaults = { keyboard = { kb(K.N) }, mouse = {}, pad = {} } },
   -- UI-UX §7.1 `move_dir` (PLAN §5.4): ONE action whose value is a 2D direction (M.move_vec).

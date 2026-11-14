@@ -13,6 +13,9 @@ M.CARD_H = 82
 M.CARD_GAP = 4
 M.MENU_W = 330
 M.MENU_ROW = 26
+M.TAB_W = 150
+M.TAB_H = 46
+M.TAB_GAP = 4
 
 local NEED_COLORS = {
   hunger = { 0.91, 0.65, 0.24, 1 },
@@ -147,6 +150,9 @@ function M.draw_cards(h, selected)
       ui.rect(r.x + r.w - 2, r.y, 2, r.h)
     end
     widgets.label(sf, i18n.t(tostring(c.name)), r.x + 8, r.y + 4, r.w - 16, theme.colors.text, 0)
+    if c.floor then
+      widgets.label(sf, i18n.t("home.floor.badge." .. tostring(c.floor)), r.x, r.y + 4, r.w - 8, theme.colors.accent, 2)
+    end
     local act = i18n.t("home.activity." .. tostring(c.activity))
     if type(c.job) == "string" and c.job ~= "" then
       act = act .. "  " .. i18n.t("home.job", { job = i18n.t(c.job) })
@@ -208,11 +214,11 @@ local function project(wx, wz)
 end
 
 --- Temperature label above every room. anchors[room_id] = { x, y } tile (room centre-ish).
-function M.draw_room_labels(h, anchors)
+function M.draw_room_labels(h, anchors, floor)
   local sf = theme.font("s")
   for _, r in ipairs(h.rooms) do
     local a = anchors[r.id]
-    if a and type(r.temp) == "number" then
+    if a and type(r.temp) == "number" and (floor == nil or r.floor == floor) then
       local sx, sy = project(a.x + 0.5, a.y - 1.5)
       if sx then
         local txt = i18n.t("home.room." .. r.id) .. "  " .. string.format("%.1f°C", r.temp)
@@ -249,6 +255,62 @@ function M.draw_stations(items)
       theme.set_color(alive and theme.colors.text or theme.colors.disabled)
       ui.text(sf, name, math.floor(sx - tw / 2), math.floor(sy) + 6)
     end
+  end
+end
+
+-- ------------------------------------------------------------------ floor tabs (right edge, top = highest floor)
+--- Rect of tab i (1 = top) among n tabs, vertically centred on the right edge.
+function M.floor_tab_rect(i, n)
+  local sw, sh = ui.screen_size()
+  local total = n * M.TAB_H + (n - 1) * M.TAB_GAP
+  return {
+    x = sw - M.TAB_W - 8,
+    y = math.floor((sh - total) / 2) + (i - 1) * (M.TAB_H + M.TAB_GAP),
+    w = M.TAB_W, h = M.TAB_H,
+  }
+end
+
+function M.floor_tab_at(n, mx, my)
+  for i = 1, n do
+    local r = M.floor_tab_rect(i, n)
+    if mx >= r.x and mx < r.x + r.w and my >= r.y and my < r.y + r.h then return i end
+  end
+  return nil
+end
+
+--- { [floor] = { people, temp } }: people from h.chars[].floor, temp = mean temperature of that floor's rooms.
+function M.floor_summary(h, order)
+  local out = {}
+  for _, f in ipairs(order) do
+    local people, sum, n = 0, 0, 0
+    for _, c in ipairs(h.chars) do if c.floor == f then people = people + 1 end end
+    for _, r in ipairs(h.rooms) do
+      if r.floor == f and type(r.temp) == "number" then sum, n = sum + r.temp, n + 1 end
+    end
+    out[f] = { people = people, temp = n > 0 and sum / n or nil }
+  end
+  return out
+end
+
+--- order = floors bottom -> top; the tabs are drawn top floor first.
+function M.draw_floor_tabs(order, current, summary)
+  local sf = theme.font("s")
+  local n = #order
+  for i = 1, n do
+    local f = order[n + 1 - i]
+    local r = M.floor_tab_rect(i, n)
+    local sel = f == current
+    widgets.panel(r.x, r.y, r.w, r.h, sel and 0.98 or 0.75)
+    if sel then
+      theme.set_color(theme.colors.accent)
+      ui.rect(r.x, r.y, 3, r.h)
+    end
+    local info = summary and summary[f] or {}
+    widgets.label(sf, i18n.t("home.floor.badge." .. f) .. "  " .. i18n.t("home.floor." .. f),
+      r.x + 10, r.y + 4, r.w - 14, sel and theme.colors.accent or theme.colors.text, 0)
+    local line = i18n.t("home.hud.floor_people", { n = info.people or 0 })
+    if type(info.temp) == "number" then line = line .. "  " .. string.format("%.1f°C", info.temp) end
+    widgets.label(sf, line, r.x + 10, r.y + 24, r.w - 14, theme.colors.text_dim, 0)
   end
 end
 
