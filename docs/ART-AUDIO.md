@@ -592,7 +592,7 @@ NE 朝向（背向观众）：`back_item` 提到 `coat` 之后、`scarf` 之前�
 清单：
 
 - 幸存者 10 人（`marcus`…`grace`），每人 3 表情 = 30 张。
-- 具名 NPC 约 20 名：名单以 `WORLD.md` 为准，规则同上，每人 1–2 表情；`lieutenant`、`sergeant` 必有。
+- 具名 NPC 19 名（PLAN §10.6 S6）：名单以 `WORLD.md` §4 为准，规则同上，每人 1–2 表情；`lieutenant`、`sergeant` 必有。
 - 通用占位：`unknown`（暗剪影，用于未见过的人）、`dead`（灰化版本，用于讣告）。
 
 #### 7.2.1 头像缩略图（48×48，PLAN §10 U1）
