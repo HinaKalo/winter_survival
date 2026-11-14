@@ -194,3 +194,25 @@ PANEL_DEMO_DEVICE=keyboard tools/shot.sh /tmp/opencode/panel_hint_keyboard_zh.pn
 绕过动作表直读按键的清单见 `widgets.lua` 文件头；P0-3 增补动作后逐项替换。
 
 探针：`tests/probe/panel_widgets.lua` 扩为 115 项，覆盖上述各条，并对 zh/en/ko × 标准/大字循环检查quad 预算、焦点可达、全部提示栏预设（三设备）不溢出、模态正文/标题不越界。`panel_demo.lua` 支持 `PANEL_DEMO_LARGE=1`。
+
+## 9. 第 2 次审查（Codex）FAIL → 最后一次返工
+
+根因：返工 1 的探针由编码代理自己编写，有几条路径被测试本身掩盖（例如 Stepper 用例总带 `on_change`，IconButton 只测鼠标），审查又只能手推。这次由主代理先写验收探针 `tests/probe/panel_accept.lua`（编码代理不得修改），确认为红后再派工。这是最后一次返工。
+
+| # | 问题 | 裁定 |
+|---|---|---|
+| P1 | 模态 / Confirm / Radial 打开时，背景控件仍响应鼠标 | 所有控件的鼠标路径共用同一个判断：有模态或 Radial 打开、且本控件不属于最上层模态组时，忽略鼠标的悬停、按下和松开 |
+| P2 | 同一次松开既关闭前一个模态，又被队列里的下一个模态当作点击 | 模态在被接纳的那一帧忽略输入（与 Radial 相同） |
+| P3 | 按住确认：鼠标按住后移出按钮，进度仍然累积 | 鼠标作为来源时，只有指针在按钮上才累积；键盘和手柄按住不受影响。给探针新增 `probe.mouse_button(button, down)`（`src/kit/probe.zig`），用来跨帧按住鼠标 |
+| P4 | Stepper 没有 `on_change` 时，键盘或手柄的修改在下一帧丢失 | `on_dir` 产生的新值存入控件状态，下一次调用时并入返回值（与 ItemGrid 的 `pending_event` 同一模式） |
+| P5 | IconButton 用键盘或手柄激活时，返回值不是 true | 激活时返回值为 true，且只为 true 一次 |
+| P6 | 从物品上拖拽时，按 Esc、B 或右键不能取消 | 拖拽中按 Esc、B 或右键：发出 `cancel`，设置 `cancel_capture`，不发 `secondary`；之后松开不产生 `move` 或 `transfer` |
+| P7 | 双击永远不会触发 `activate` | 双击判断放在清空 `held` 之前 |
+| P8 | 鼠标路径不检查 `item.enabled` | 鼠标的选择、转移、拖拽对禁用的物品一律不响应 |
+| P9 | Stepper 在长按重复期间被禁用，仍继续步进 | 重复循环每一步都检查 `enabled` |
+| P10 | List 行的提示框在指针回到该行时立即出现 | 提示框距上次调用超过一帧的间隔就从 0 重新计时（在 `M.tooltip` 里统一处理） |
+| I1 | 合并 main 之后，`i18n_check` 报 7 个未使用的键（`hint.run`、`hint.sneak`、`ui.demo.*`） | 删除不用的键；预留给后续界面的键加 `-- i18n:keep` 标记。`python3 tools/assets.py check` 必须全绿 |
+| V1 | 大字号下进度条文字被填充边界分成两种颜色，难以辨认，而且字高超出条高 | 文字只用一种颜色加描边或阴影；条高不小于字体行高 + 2。用截图核验（三语 × 普通/大字号） |
+| V2 | 网格数量角标压在格子边框上 | 角标完全落在格内（右、下各留至少 2 px 内边距）。用截图核验 |
+
+完成标准：`panel_accept.lua` 全部通过；`panel_widgets.lua`、luatest、`zig build test`、其余全部探针仍然全绿；`assets.py check` 0 错；V1/V2 截图交主代理查看。

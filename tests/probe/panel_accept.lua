@@ -62,7 +62,7 @@ function Ctx:draw()
       Ctx.bg_ret = Ctx.bg_ret + 1
     end
   elseif m == "stepper" then
-    local v = widgets.stepper("acc_step", { x = 24, y = 24 }, Ctx.s_val, 0, 20, 1, { enabled = Ctx.s_enabled })
+    local v = widgets.stepper("acc_step", { x = 24, y = 24, w = 320, h = 40 }, Ctx.s_val, 0, 20, 1, { enabled = Ctx.s_enabled })
     Ctx.s_val = v
   elseif m == "grid" then
     local _, ev = widgets.item_grid("acc_grid", { x = 24, y = 24 }, 4, 1, GRID_ITEMS, 1, {})
@@ -186,6 +186,7 @@ end
 local function p6_grid_drag_cancel()
   reset(); Ctx.mode = "grid"
   wait(0.15)
+  probe.check("P6: runs with probe.mouse_button (drag needs a held button)", HAS_HOLD)
   local a, c = grid_cell(1), grid_cell(3)
   probe.check("P6: grid cells registered", a ~= nil and c ~= nil)
   if not (a and c and HAS_HOLD) then return end
@@ -245,6 +246,7 @@ local function p9_stepper_disable_stops_repeat()
   frames(2)
   probe.key(keys.RIGHT, true)
   wait(0.1)
+  probe.check("P9: the first RIGHT press stepped while enabled (got " .. tostring(Ctx.s_val) .. ")", Ctx.s_val == 6)
   Ctx.s_enabled = false
   local v = Ctx.s_val
   wait(1.0)
