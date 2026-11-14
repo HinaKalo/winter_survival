@@ -27,3 +27,5 @@
 | [02_character_arcs_30_beats.md](./02_character_arcs_30_beats.md) | 10 名幸存者 ×（1 句伏笔 `bark_<char>_0` + 3 段 `arc_<char>_1..3`）= 40 拍完整分镜、C6/C9 映射与台词方向 | M8 叙事引擎、M10 角色线铺量、三语 `i18n` |
 | [03_storylets_world_and_kilo.md](./03_storylets_world_and_kilo.md) | 道德延迟回响链、基洛哨站主线弧、心理危机与 `text_soft` 对照分镜 | M8 规则验证、M9 哨站线、M10 片段池 |
 | [04_act_pacing_and_slot_map.md](./04_act_pacing_and_slot_map.md) | 三幕 30 天张力曲线、11 个 C9 触发点的 UI 承载方式、每日曝光预算与资产交叉索引 | 导演系统调优（M8/M10）、UI/UX 对接 |
+| [05_npc_encounters_and_barks.md](./05_npc_encounters_and_barks.md) | 19 名具名 NPC 的物件调度与初次/友好/敌对三态对白分镜 | M5 交易与门口交互、M8/M10 片段与 `i18n` |
+| [06_ending_epilogues_and_recap.md](./06_ending_epilogues_and_recap.md) | 四大结局变体、10 名幸存者五档尾声卡片与“你做过的事”账本回顾屏文案方向 | M9 结局与尾声、`scenes/ending` |
