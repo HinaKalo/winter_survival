@@ -1,196 +1,220 @@
--- Command interface: every player/bot change to the model goes through here.
-local balance = require("data.balance")
-local chars = require("sim.chars")
-local needs = require("sim.needs")
-local health = require("sim.health")
-local home = require("sim.home")
-local craft = require("sim.craft")
-local tech = require("sim.tech")
+-- Command registry (P0-PLAN 3.2, PARALLEL-PLAN C2): every player/bot change to the model goes
+-- through commands.run. Handlers live in sim/cmd/<domain>.lua and register themselves here:
+--
+--   local reg = require("sim.commands").domain("needs")
+--   reg("eat", function(state, cmd) ... end, {
+--     args = { { "char", "char" }, { "item", "item?" } },  -- ordered; "?" = optional
+--     phase = nil, phase_err = nil,                         -- e.g. { "day" }, "not_day"
+--   })
+--
+-- Arg entry: { name, type, max = (char_list), enum_err = (enum), missing_err = (required), optional = (enum) }.
+-- Types: char char_list item recipe tech room station job loc npc item_counts number int boolean
+-- string table, or an enum list such as { "low", "high" }.
+-- Rule for handlers: every check happens before the first write to the state.
 local inventory = require("sim.inventory")
-local expedition = require("sim.expedition")
 local state_mod = require("sim.state")
+local items_data = require("data.items")
+local recipes_data = require("data.recipes")
+local tech_data = require("data.tech")
 
 local M = {}
+package.loaded["sim.commands"] = M -- domain files require this module while it is still loading
+
+-- Adding a domain is a contract change (P0-PLAN 3.2).
+M.DOMAINS = { "home", "needs", "craft", "tech", "night", "raid", "trade", "travel", "story" }
+
+-- Old M3 names, kept until the end of M4. The failure log records the name as submitted.
+local ALIASES = {
+  eat = "needs.eat", drink = "needs.drink", use = "needs.use", sleep = "needs.sleep", wake = "needs.wake",
+  treat = "needs.treat",
+  equip = "home.equip", unequip = "home.unequip", assign = "home.assign", activity = "home.set_activity",
+  toggle = "home.toggle", set_level = "home.set_level", set_door = "home.set_door", board = "home.board",
+  end_day = "home.end_day",
+  craft = "craft.start", cancel_job = "craft.cancel",
+  research = "tech.start", cancel_research = "tech.cancel", learn_blueprint = "tech.learn_blueprint",
+  night_roles = "night.set_roles",
+  expedition = "raid.autoresolve",
+}
+
+local registry = {} -- kind -> { fn = function, spec = table }
+
+-- ------------------------------------------------------------------ argument types
 
 local function finite(v)
   return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge
 end
 
-local function alive_char(state, cid)
-  if type(cid) ~= "string" then return nil, "no_char" end
-  local ch = state.party.chars[cid]
-  if not ch or ch.status ~= "alive" then return nil, "no_char" end
-  return ch
+local TYPE_ERR = {
+  char = "no_char", char_list = "bad_squad", item = "unknown_item", recipe = "unknown_recipe",
+  tech = "unknown_tech", room = "bad_room", station = "no_station", job = "no_job", loc = "bad_loc",
+  npc = "bad_npc", item_counts = "bad_items", number = "bad_arg", int = "bad_arg", boolean = "bad_arg",
+  string = "bad_arg", table = "bad_arg",
+}
+
+local function alive(state, id)
+  if type(id) ~= "string" then return false end
+  local ch = state.party.chars[id]
+  return ch ~= nil and ch.status == "alive"
 end
 
-local handlers = {}
+local CHECKS = {}
 
-handlers.eat = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return needs.eat(state, ch, cmd.item)
-end
+function CHECKS.char(state, v) return alive(state, v) end
 
-handlers.drink = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return needs.drink(state, ch, cmd.item)
-end
+function CHECKS.item(_, v) return type(v) == "string" and items_data.items[v] ~= nil end
+function CHECKS.recipe(_, v) return type(v) == "string" and recipes_data.recipes[v] ~= nil end
+function CHECKS.tech(_, v) return type(v) == "string" and tech_data.by_id[v] ~= nil end
+function CHECKS.room(state, v) return type(v) == "string" and state.home.rooms[v] ~= nil end
+function CHECKS.station(state, v) return type(v) == "string" and state.home.stations[v] ~= nil end
+function CHECKS.job(state, v) return type(v) == "string" and state.jobs[v] ~= nil end
 
-handlers.use = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  if not cmd.item then return false, "no_item" end
-  return needs.consume_item(state, ch, cmd.item)
-end
-
-handlers.equip = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return chars.equip(state, ch, cmd.item)
-end
-
-handlers.unequip = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return chars.unequip(state, ch, cmd.slot)
-end
-
-handlers.sleep = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return needs.sleep(state, ch)
-end
-
-handlers.wake = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return needs.wake(state, ch)
-end
-
-handlers.assign = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return home.assign(state, ch.id, cmd.room)
-end
-
-handlers.activity = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  local ok_activity = { idle = true, work = true, sleep = true, guard = true, out = true }
-  if not ok_activity[cmd.value] then return false, "bad_activity" end
-  -- Changing activity never cancels a job: it just pauses it (PLAN 9.1); only cancel_job drops it.
-  ch.activity = cmd.value
+function CHECKS.loc(state, v)
+  if type(v) ~= "string" or not v:match("^[a-z0-9_]+$") then return false end
+  local locs = state.world and state.world.locations
+  if type(locs) == "table" and next(locs) ~= nil then return locs[v] ~= nil end
   return true
 end
 
-handlers.craft = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  if cmd.room ~= nil and (type(cmd.room) ~= "string" or not state.home.rooms[cmd.room]) then
-    return false, "bad_room"
+function CHECKS.npc(_, v) return type(v) == "string" and v:match("^[a-z0-9_.]+$") ~= nil end
+
+function CHECKS.item_counts(_, v)
+  if type(v) ~= "table" then return false end
+  for id, n in pairs(v) do
+    if type(id) ~= "string" or items_data.items[id] == nil then return false end
+    if not finite(n) or n < 1 or n ~= math.floor(n) then return false end
   end
-  return craft.start(state, cmd.recipe, ch.id, { room = cmd.room })
-end
-
-handlers.cancel_job = function(state, cmd)
-  return craft.cancel(state, cmd.job)
-end
-
-handlers.research = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return tech.start(state, cmd.tech, ch.id)
-end
-
-handlers.cancel_research = function(state)
-  return tech.cancel(state, "command")
-end
-
-handlers.toggle = function(state, cmd)
-  return home.set_toggle(state, cmd.station, cmd.on)
-end
-
-handlers.set_level = function(state, cmd)
-  local st = state.home.stations[cmd.station]
-  if not st then return false, "no_station" end
-  if cmd.level ~= "low" and cmd.level ~= "high" then return false, "bad_level" end
-  st.level = cmd.level
   return true
 end
 
-handlers.set_door = function(state, cmd)
-  local d = state.home.structure.doors[tostring(cmd.x) .. "," .. tostring(cmd.y)]
-  if not d then return false, "no_door" end
-  d.open = cmd.open and true or false
-  home.rebuild(state)
-  return true
-end
+function CHECKS.number(_, v) return finite(v) end
+function CHECKS.int(_, v) return finite(v) and v == math.floor(v) end
+function CHECKS.boolean(_, v) return type(v) == "boolean" end
+function CHECKS.string(_, v) return type(v) == "string" end
+function CHECKS.table(_, v) return type(v) == "table" end
 
-handlers.board = function(state, cmd)
-  local room = cmd.room or state.home.default_room
-  if cmd.what == "hole" then return home.board_hole(state, room) end
-  return home.board_window(state, room)
-end
-
-handlers.treat = function(state, cmd)
-  local patient, err = alive_char(state, cmd.patient)
-  if not patient then return false, err end
-  local actor, err2 = alive_char(state, cmd.actor or cmd.patient)
-  if not actor then return false, err2 end
-  return health.treat(state, patient, actor, cmd.item)
-end
-
-handlers.learn_blueprint = function(state, cmd)
-  local ch, err = alive_char(state, cmd.char)
-  if not ch then return false, err end
-  return tech.learn_blueprint(state, ch.id, cmd.item)
-end
-
-handlers.night_roles = function(state, cmd)
-  if state.clock.phase ~= "dusk" and state.clock.phase ~= "night" then
-    return false, "not_dusk"
-  end
-  if cmd.roles ~= nil and type(cmd.roles) ~= "table" then return false, "bad_roles" end
-  if cmd.target ~= nil and type(cmd.target) ~= "string" then return false, "bad_target" end
-  local roles = {}
-  for _, cid in ipairs(state.party.order) do
-    local role = (cmd.roles or {})[cid] or "sleep"
-    if role ~= "out" and role ~= "guard" and role ~= "sleep" then return false, "bad_role" end
-    roles[cid] = role
-  end
-  state.night.roles = roles
-  state.night.target = cmd.target
-  state_mod.log(state, "night_roles", { roles = roles, target = cmd.target })
-  return true
-end
-
-handlers.expedition = function(state, cmd)
-  if state.clock.phase ~= "night" then return false, "not_night" end
-  local squad = cmd.squad
-  if type(squad) ~= "table" then return false, "bad_squad" end
+-- Returns nil or an error code.
+local function check_char_list(state, v, entry)
+  if type(v) ~= "table" then return "bad_squad" end
   local n = 0
-  for _ in pairs(squad) do n = n + 1 end
-  if n < 1 or n > 2 or n ~= #squad then return false, "bad_squad" end
+  for _ in pairs(v) do n = n + 1 end
+  if n < 1 or n > (entry.max or math.huge) or n ~= #v then return "bad_squad" end
   local seen = {}
-  for _, cid in ipairs(squad) do
-    local ch, err = alive_char(state, cid)
-    if not ch then return false, err end
-    if seen[cid] then return false, "bad_squad" end
+  for _, cid in ipairs(v) do
+    if not alive(state, cid) then return "no_char" end
+    if seen[cid] then return "bad_squad" end
     seen[cid] = true
   end
-  if cmd.hours ~= nil and (not finite(cmd.hours) or cmd.hours < 0 or cmd.hours > 24) then
-    return false, "bad_hours"
-  end
-  local result = expedition.night(state, squad, cmd.hours)
-  for _, cid in ipairs(squad) do
-    local ch = state.party.chars[cid]
-    if ch and ch.status == "alive" then ch.activity = "sleep" end
-  end
-  return true, nil, result
+  return nil
 end
 
--- end_day lives in sim.lua (it needs sim.step); sim.command dispatches it.
+local function base_type(t)
+  if type(t) == "table" then return nil end
+  local bt = t:gsub("%?$", "")
+  return bt
+end
+
+local function is_optional(entry)
+  local t = entry[2]
+  if type(t) == "table" then return entry.optional == true end
+  return t:sub(-1) == "?"
+end
+
+local function check_arg(state, cmd, entry)
+  local v = cmd[entry[1]]
+  local t = entry[2]
+  if v == nil then
+    if is_optional(entry) then return nil end
+    if type(t) == "table" then return entry.enum_err or "bad_arg" end
+    return entry.missing_err or TYPE_ERR[base_type(t)]
+  end
+  if type(t) == "table" then
+    for _, e in ipairs(t) do
+      if v == e then return nil end
+    end
+    return entry.enum_err or "bad_arg"
+  end
+  local bt = base_type(t)
+  if bt == "char_list" then return check_char_list(state, v, entry) end
+  if not CHECKS[bt](state, v) then return TYPE_ERR[bt] end
+  return nil
+end
+
+-- ------------------------------------------------------------------ registration
+
+local function valid_spec(spec)
+  if type(spec) ~= "table" or type(spec.args) ~= "table" then return false end
+  for _, a in ipairs(spec.args) do
+    if type(a) ~= "table" or type(a[1]) ~= "string" then return false end
+    local t = a[2]
+    if type(t) == "string" then
+      local bt = base_type(t)
+      if not (CHECKS[bt] or bt == "char_list") then return false end
+    elseif type(t) ~= "table" then
+      return false
+    end
+  end
+  if spec.phase ~= nil and type(spec.phase) ~= "table" then return false end
+  return true
+end
+
+local function register(kind, fn, spec)
+  if type(kind) ~= "string" or not kind:match("^[a-z]+%.[a-z_]+$") then
+    error("commands: bad command name " .. tostring(kind), 3)
+  end
+  local dom = kind:match("^([a-z]+)%.")
+  local known = false
+  for _, d in ipairs(M.DOMAINS) do known = known or d == dom end
+  if not known then error("commands: unknown domain in " .. kind, 3) end
+  if registry[kind] then error("commands: duplicate command " .. kind, 3) end
+  if type(fn) ~= "function" then error("commands: handler for " .. kind .. " must be a function", 3) end
+  if not valid_spec(spec) then error("commands: bad spec for " .. kind, 3) end
+  registry[kind] = { fn = fn, spec = spec }
+end
+
+-- Returns reg(short_name, fn, spec); short_name may also be the full "domain.name".
+function M.domain(d)
+  local known = false
+  for _, name in ipairs(M.DOMAINS) do known = known or name == d end
+  if not known then error("commands: domain " .. tostring(d) .. " is not in DOMAINS", 2) end
+  return function(name, fn, spec)
+    if type(name) ~= "string" then error("commands: bad command name " .. tostring(name), 2) end
+    local full = name:find(".", 1, true) and name or (d .. "." .. name)
+    if full:match("^([^.]*)%.") ~= d then
+      error("commands: " .. full .. " does not belong to domain " .. d, 2)
+    end
+    register(full, fn, spec)
+  end
+end
+
+-- Registers the signature only; the handler always fails with not_implemented (no state, no log).
+function M.reserve(kind, spec)
+  register(kind, function() return false, "not_implemented" end, spec)
+end
+
+function M.list()
+  local out = {}
+  for kind in pairs(registry) do out[#out + 1] = kind end
+  table.sort(out)
+  return out
+end
+
+function M.spec(kind)
+  local e = type(kind) == "string" and registry[kind] or nil
+  return e and e.spec or nil
+end
+
+function M.aliases()
+  local out = {}
+  for old, new in pairs(ALIASES) do out[old] = new end
+  return out
+end
+
+function M.can(_, kind)
+  if type(kind) ~= "string" then return false end
+  return registry[ALIASES[kind] or kind] ~= nil
+end
+
+-- ------------------------------------------------------------------ run
 
 -- Returns ok, err, extra. Unknown kinds, garbage fields and handler faults give false, err and
 -- never raise; faults are also recorded in state.errors so audits see them.
@@ -199,25 +223,41 @@ function M.run(state, cmd)
   local kind = cmd.kind
   if kind == nil then kind = cmd[1] end
   if type(kind) ~= "string" then return false, "bad_command" end
-  local fn = handlers[kind]
-  if not fn then return false, "unknown_command:" .. kind end
-  -- Inventory flow ledger: everything this command moves is booked under its kind (craft/research
-  -- override with finer reasons; equip/unequip are the bag <-> wear transfers the audit expects).
+  local entry = registry[ALIASES[kind] or kind]
+  if not entry then return false, "unknown_command" end
+  local spec = entry.spec
+
+  local function fail(err)
+    state_mod.log(state, "command_failed", { kind = kind, err = err })
+    return false, err
+  end
+
+  if spec.phase then
+    local allowed = false
+    for _, p in ipairs(spec.phase) do allowed = allowed or p == state.clock.phase end
+    if not allowed then return fail(spec.phase_err or "wrong_phase") end
+  end
+  for _, a in ipairs(spec.args) do
+    local err = check_arg(state, cmd, a)
+    if err then return fail(err) end
+  end
+
+  -- Inventory flow ledger: everything this command moves is booked under the submitted kind
+  -- (craft/research override with finer reasons).
   local prev_reason = inventory.set_reason(kind)
-  local called, ok, err, extra = pcall(fn, state, cmd)
+  local called, ok, err, extra = pcall(entry.fn, state, cmd)
   inventory.set_reason(prev_reason)
   if not called then
     state_mod.error(state, "command " .. kind .. " raised: " .. tostring(ok))
     return false, "internal_error"
   end
   if not ok then
+    if err == "not_implemented" then return false, err end
     state_mod.log(state, "command_failed", { kind = kind, err = tostring(err) })
   end
   return ok and true or false, err, extra
 end
 
-function M.can(state, kind)
-  return handlers[kind] ~= nil
-end
+for _, d in ipairs(M.DOMAINS) do require("sim.cmd." .. d) end
 
 return M
