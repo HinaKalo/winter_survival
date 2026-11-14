@@ -7,7 +7,7 @@ local scene = require("core.scene")
 local input = require("core.input")
 local hs = require("game.home_session")
 
-probe.timeout(150)
+probe.timeout(200)
 
 local now = 0
 local function wait(sec)
@@ -160,6 +160,15 @@ local function scenario()
   probe.check("toggling the stove succeeded", ok and now_on ~= stove_on)
   probe.check("stove model follows the toggle",
     vis(home, "F1_woodstove_on") == now_on and vis(home, "F1_woodstove_off") == not now_on)
+
+  -- review r2 (P2): a room built during play (cold cell, on 1F inside the living room) is a real move target
+  local cc = require("data.balance").thermal.cold_cell_room.id
+  require("sim.home").add_cold_cell(s.state)
+  probe.check("cold cell built", s.state.home.rooms[cc] ~= nil)
+  local okc = hs.act(s, cid, "move:" .. cc)
+  probe.check("the basement character can be sent to the cold cell", okc and s.state.party.chars[cid].room == cc)
+  local back = wait_until(40, function() return home.actor_floor[cid] == "F1" end)
+  probe.check("they climb back to 1F for the cold cell", back)
 
   -- time still runs and nothing broke
   local m0 = s.state.clock.minute

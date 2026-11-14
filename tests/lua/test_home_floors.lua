@@ -185,6 +185,23 @@ function T.move_disabled_while_working()
   assert(snap(s) == before, "failed move leaves state unchanged")
 end
 
+-- review r2 (P2): rooms added during play (the cold cell, CONTENT 5.3) live inside the default room on 1F.
+function T.cold_cell_is_a_first_floor_move_target()
+  local s = hs.new(7)
+  assert(require("sim.home").add_cold_cell(s.state))
+  local cc = balance.thermal.cold_cell_room.id
+  assert(s.state.home.rooms[cc].floor == "F1", "cold cell floor")
+  assert(floors.of_room(s.state, cc) == "F1")
+  local cid = first_cid(s)
+  local mv = find(hs.actions(s, cid), "move:" .. cc)
+  assert(mv and mv.enabled, "cold cell offered as a move target")
+  assert(hs.act(s, cid, "move:" .. cc))
+  assert(s.state.party.chars[cid].room == cc)
+  local h = hs.hud(s)
+  for _, r in ipairs(h.rooms) do if r.id == cc then assert(r.floor == "F1") end end
+  for _, c in ipairs(h.chars) do if c.id == cid then assert(c.floor == "F1") end end
+end
+
 function T.body_heat_follows_the_room()
   local s = hs.new(9)
   local cid = first_cid(s)
