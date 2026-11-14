@@ -160,6 +160,7 @@ winter_survival/
 │   └── tools/             Python 单元测试（assets.py 与 ci/ 脚本）
 ├── tools/
 │   ├── assets.py          资产流水线 CLI（placeholder / audio / art / check）
+│   ├── i18n_check.py      三语文本静态检查（由 assets.py check 调用）
 │   ├── gen_assets.py      Pillow 占位美术生成器（由 assets.py placeholder 调用）
 │   └── new_game.py        生成新游戏项目
 ├── ci/                    Jenkins 流水线与脚本（见 CI 一节）
@@ -648,7 +649,8 @@ python3 tools/assets.py check [--junit FILE]
 - 目录中每个文件存在，且文件头的格式符合规格（见下文）；
 - `assets_src/audio.json` 中的 id 与目录一一对应；
 - `assets_src/art.json` 中的美术存在且尺寸一致；
-- Lua 中以字符串字面量调用的 `audio.sfx("…")`、`audio.sfx_var("…")`、`audio.bgm("…")` 的 id 存在于目录，且 kind 匹配（分组名 `lua audio ids`）。
+- Lua 中以字符串字面量调用的 `audio.sfx("…")`、`audio.sfx_var("…")`、`audio.bgm("…")` 的 id 存在于目录，且 kind 匹配（分组名 `lua audio ids`）；
+- 三语文本表 `assets/i18n/{zh,en,ko}.lua` 的键完全一致、占位符一致，且没有未被 Lua 引用的键（行尾加 `-- i18n:keep` 注释的键豁免“未引用”检查，用于预留给后续控件的通用键；分组名 `i18n`；也可单独运行 `python3 tools/i18n_check.py`）。
 
 ### 清单
 

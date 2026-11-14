@@ -21,6 +21,7 @@ pipeline {
         sh 'bash winter_survival/ci/setup_delve.sh delve-framework "$(cat winter_survival/ci/delve.rev)"'
         dir('winter_survival') {
           sh 'mkdir -p reports/linux'
+          // assets.py check includes the i18n group (tools/i18n_check.py) and font coverage.
           sh 'python3 tools/assets.py check --junit reports/linux/assets.xml'
           sh 'python3 ci/run_pytests.py --junit reports/linux/unit_py.xml'
         }
