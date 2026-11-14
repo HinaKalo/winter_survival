@@ -146,6 +146,9 @@ local function validate_inventories_and_jobs(state)
         return false, "job " .. jid .. " has unknown tech"
       end
       if not finite(job.remaining) or not finite(job.total) then return false, "job " .. jid .. " bad progress" end
+      if job.total <= 0 or job.remaining < 0 or job.remaining > job.total then
+        return false, "job " .. jid .. " progress out of range"
+      end
       if state.tech.research ~= jid then return false, "research job " .. jid .. " is not tech.research" end
     else
       if type(job.recipe) ~= "string" or not recipes.get(job.recipe) then
@@ -154,6 +157,15 @@ local function validate_inventories_and_jobs(state)
       if not finite(job.work_remaining) or not finite(job.work_total) or not finite(job.wait_remaining) then
         return false, "job " .. jid .. " bad progress"
       end
+      -- a waiting job may have overshot below 0; a running one counts down from work_total to 0
+      if job.work_total <= 0 or job.work_remaining > job.work_total or job.wait_remaining < 0
+        or (not job.waiting and job.work_remaining < 0) then
+        return false, "job " .. jid .. " progress out of range"
+      end
+    end
+    -- craft.tick / tech.tick multiply by speed: nil (= 1) or a positive finite number
+    if job.speed ~= nil and (not finite(job.speed) or job.speed <= 0) then
+      return false, "job " .. jid .. " bad speed"
     end
     local good, e = validate_refund(jid, job.refund)
     if not good then return false, e end

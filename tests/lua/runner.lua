@@ -20,6 +20,7 @@ local test_files = {
   "test_sim_bot",
   "test_sim_weather",
   "test_sim_30d",
+  "test_m3_final",
 }
 
 local queue = {}

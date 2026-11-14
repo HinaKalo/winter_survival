@@ -236,3 +236,16 @@ timeout 8 ./zig-out/bin/winter_survival --no-audio
 | CONTENT 未给出的数值 | 不删机制，移入 `balance.lua` 并注释 `-- M3 占位，非 CONTENT 数值`，同时列入 §5.1 占位表（感染 5 hp/天、体温心情 −0.4、急救后体温 20、超重规则等） |
 | 漏实现的 CONTENT 数值 | 加湿器湿度 ≥ 60 时停机不耗电；灶做饭中 +400 W；冻伤治疗需房间 ≥ 12 °C + 绷带 |
 | 其它 | `ranch_a` 的开局破窗键统一为 `broken_windows`；冷病传染按同房间病人计；锚点必须是字符串 id、落在开放格、每个锚点只认领一次，否则 `nil, err`；伤势阈值读 `balance.health`；成功的 craft/research 命令返回 `true, nil, job`；`state.validate` 补查 stash、背包、wear、作业表；`garage` 设施的交接说明写入 §8 |
+
+### 9.4 第 2 次返工后的 Codex 审查（FAIL）→ 主代理亲自修复
+
+按返工上限规则，不再进行第三次返工。主代理先把 6 条确认的问题写成验收测试 `tests/lua/test_m3_final.lua`，确认为红后亲自修复。
+
+| # | 问题 | 修复规则 | 测试 |
+|---|---|---|---|
+| N1 | 黎明只把 out/guard 恢复为 work，夜里睡觉的角色手里的作业一直暂停 | 黎明时 out、guard、sleep 三种状态都恢复：有作业 → work，无作业 → idle | `dawn_wakes_sleepers_back_to_their_jobs` |
+| N2 | `state.validate` 不查 `job.speed`，也不查进度范围 | `speed` 为 nil 或有限正数；`work_total > 0`；未等待时 `0 ≤ work_remaining ≤ work_total`；`wait_remaining ≥ 0`；研究作业 `total > 0` 且 `0 ≤ remaining ≤ total` | `validate_rejects_bad_job_speed_and_progress` |
+| N3 | 直接调用 `chars.equip/unequip` 时原因记成 "other"，台账出错 | 两个函数内部显式传 `equip`/`unequip` 原因，不改动外部的环境原因 | `direct_equip_and_unequip_keep_the_ledger` |
+| N4 | 效率为 0 的停滞烹饪仍然算作做饭（+400 W、加湿） | `cooking_active` 要求 `chars.efficiency > 0`，与 `craft.tick` 一致 | `stalled_cooking_gives_no_stove_heat` |
+| N5 | 锚点坐标极大时 `%d` 格式化抛错 | 先检查坐标在网格范围内，否则返回 `nil, err`；错误信息不用 `%d` | `anchor_huge_coordinates_return_error` |
+| N6 | 稳态温度测试只算字面量，没有跑模型 | 用 `thermal.tick` 积分到稳态并与 `-15 + Q/G` 比较 | `steady_state_from_the_model` |

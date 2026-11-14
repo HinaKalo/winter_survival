@@ -135,9 +135,10 @@ function M.advance_phase(state, to, from)
     M.apply_night_roles(state)
     state_mod.log(state, "night_start", { day = state.clock.day })
   elseif to == "dawn" then
-    -- Night roles end; anyone holding a job goes back to work (jobs were only paused).
+    -- Night roles (out / guard / sleep) end; anyone holding a job goes back to work (jobs were only
+    -- paused), everyone else is idle.
     for _, ch in ipairs(chars.alive(state)) do
-      if ch.activity == "out" or ch.activity == "guard" then
+      if ch.activity == "out" or ch.activity == "guard" or ch.activity == "sleep" then
         ch.activity = ch.job and "work" or "idle"
       end
     end

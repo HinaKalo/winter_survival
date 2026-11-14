@@ -342,7 +342,8 @@ function M.cooking_active(state)
       local recipe = recipes.get(job.recipe)
       local ch = state.party.chars[job.actor]
       if recipe and (recipe.station == "hearth" or recipe.station == "hearth2")
-        and ch and not ch.dead and ch.status ~= "dead" and ch.job == id and ch.activity == "work" then
+        and ch and not ch.dead and ch.status ~= "dead" and ch.job == id and ch.activity == "work"
+        and require("sim.chars").efficiency(state, ch) > 0 then -- same pause rule as craft.tick
         return true
       end
     end

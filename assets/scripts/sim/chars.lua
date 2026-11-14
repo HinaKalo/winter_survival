@@ -334,10 +334,11 @@ function M.equip(state, ch, item_id)
   local bag = ch.inv
   if inventory.count(ch.inv, item_id) <= 0 then bag = state.home.stash end
   if inventory.count(bag, item_id) <= 0 then return false, "missing" end
+  -- explicit reasons: the ledger books bag<->wear moves under equip/unequip whoever calls this
   if ch.wear[slot] then
-    inventory.add(state.home.stash, ch.wear[slot], 1, { force = true })
+    inventory.add(state.home.stash, ch.wear[slot], 1, { force = true, reason = "unequip" })
   end
-  inventory.remove(bag, item_id, 1)
+  inventory.remove(bag, item_id, 1, "equip")
   ch.wear[slot] = item_id
   M.sync_inv(ch)
   return true
@@ -347,7 +348,7 @@ function M.unequip(state, ch, slot)
   local old = ch.wear[slot]
   if not old then return false, "empty" end
   ch.wear[slot] = nil
-  inventory.add(state.home.stash, old, 1, { force = true })
+  inventory.add(state.home.stash, old, 1, { force = true, reason = "unequip" })
   M.sync_inv(ch)
   return true
 end

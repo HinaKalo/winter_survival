@@ -184,8 +184,13 @@ function M.parse(template, variant, opts)
     if a.x % 1 ~= 0 or a.y % 1 ~= 0 then
       return nil, "layout: anchor " .. id .. " needs integer x and y"
     end
+    -- range check first: huge floats have no integer representation for %d / table keys
+    local where = "(" .. tostring(a.x) .. "," .. tostring(a.y) .. ")"
+    if a.x < 0 or a.y < 0 or a.x >= width or a.y >= #v.grid then
+      return nil, "layout: anchor " .. id .. " at " .. where .. " is not on an open cell (outside the grid)"
+    end
     if not is_open(get(a.x, a.y)) then
-      return nil, string.format("layout: anchor %s at (%d,%d) is not on an open cell", id, a.x, a.y)
+      return nil, "layout: anchor " .. id .. " at " .. where .. " is not on an open cell"
     end
     local k = a.y .. "," .. a.x
     if anchors[k] then
