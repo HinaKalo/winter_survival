@@ -172,6 +172,19 @@ function T.failed_move_leaves_state_unchanged()
   assert(snap(s) == before2)
 end
 
+-- review r1 (P2): a character with a running job keeps going to the job's station; move is disabled ("busy").
+function T.move_disabled_while_working()
+  local s = hs.new(7)
+  local cid = first_cid(s)
+  assert(hs.act(s, cid, "craft:clear_rubble"), "start a job")
+  assert(s.state.party.chars[cid].job, "has a job")
+  local mv = find(hs.actions(s, cid), "move:shelter")
+  assert(mv and mv.enabled == false and mv.reason == "busy", "move disabled with reason busy")
+  local before = snap(s)
+  assert(not hs.act(s, cid, "move:shelter"))
+  assert(snap(s) == before, "failed move leaves state unchanged")
+end
+
 function T.body_heat_follows_the_room()
   local s = hs.new(9)
   local cid = first_cid(s)
