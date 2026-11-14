@@ -1,8 +1,33 @@
-# winter_survival
+# winter_survival —《零下三十 / Thirty Below / 영하 삼십》（暂名）
 
-基于 [Delve Framework](https://github.com/Interrupt/delve-framework) 的 Zig 游戏起步工程。它包含等距 2.5D 引擎、音频模块、无头探针、资产流水线与 Jenkins CI，游戏逻辑全部写在 Lua 中，开新游戏时通常从 `tools/new_game.py` 生成一份独立项目。
+俯视等距 2.5D 的寒冬末日生存游戏。一场史无前例的寒潮在半年内摧毁了现代文明，玩家带领 4 名各有特长与缺点的幸存者，在明尼苏达州虚构小镇哈洛瀑布的一栋半毁的房子里熬过 30 天：白天整理据点、修设备、交易，夜晚派 1–2 人潜入别处偷窃或掠夺。游戏的核心是稀缺逼出来的道德抉择，以及世界对这些抉择的记忆。支持中文、English、한국어；键鼠、纯鼠标、纯手柄均可完整游玩。
 
-本工程派生自 iso-base（等距 2.5D 基座）。
+基于 [Delve Framework](https://github.com/Interrupt/delve-framework)（Zig 0.16 + Sokol + Lua 5.4），由 `~/dev/delve-starter` 脚手架生成。
+
+## 当前状态
+
+| 项 | 状态 |
+|---|---|
+| 阶段 | M0 完成（2026-11-14）：工程生成、设计文档、Jenkins 任务。代码仍是脚手架的示例场景，只保证构建与冒烟通过 |
+| 下一步 | M1：引擎扩展 A（自建 Lua VM、三语文本、UI、手柄、存档）+ Lua 基础设施，见 `docs/PLAN.md §6` |
+| CI | Jenkins 任务 `winter_survival`（每 2 分钟轮询本机 git daemon），见 `docs/CI-PLAN.md` |
+
+## 设计文档
+
+| 文档 | 内容 |
+|---|---|
+| [`docs/PLAN.md`](docs/PLAN.md) | 总计划：核心决策、技术架构、里程碑 M0–M12、验证、风险。**从这里开始读** |
+| [`docs/GDD.md`](docs/GDD.md) | 游戏设计与输入系统 |
+| [`docs/NARRATIVE.md`](docs/NARRATIVE.md) | 叙事与道德系统：设计原理与 Lua 架构 |
+| [`docs/CONTENT.md`](docs/CONTENT.md) | 物品、配方、科技、设施、模拟常数、战利品预算 |
+| [`docs/WORLD.md`](docs/WORLD.md) | 人物、NPC、势力、地点、哨站主线、反应规则与首批故事片段 |
+| [`docs/UI-UX.md`](docs/UI-UX.md) | 界面与交互规格 |
+| [`docs/ART-AUDIO.md`](docs/ART-AUDIO.md) | 美术与音频规格 |
+| [`docs/ENGINE-PLAN.md`](docs/ENGINE-PLAN.md) | 引擎扩展设计（Zig 侧） |
+| [`docs/ENGINE-BASE.md`](docs/ENGINE-BASE.md) | 脚手架继承的 iso-base 引擎原始计划 |
+| [`docs/CI-PLAN.md`](docs/CI-PLAN.md) | Jenkins 流水线 |
+
+以下各节是脚手架引擎（继承自 iso-base 与 delve-starter）的使用说明。随着 ENGINE-PLAN 的扩展落地，相应章节会更新。
 
 ## 特性
 
@@ -138,7 +163,7 @@ winter_survival/
 │   ├── gen_assets.py      Pillow 占位美术生成器（由 assets.py placeholder 调用）
 │   └── new_game.py        生成新游戏项目
 ├── ci/                    Jenkins 流水线与脚本（见 CI 一节）
-└── docs/                  PLAN.md（引擎设计）、CI-PLAN.md（CI 设计）、STARTER-PLAN.md（起步工程规划）
+└── docs/                  设计文档（见上文"设计文档"表）；ENGINE-BASE.md 为引擎原始设计
 ```
 
 ### 渲染思路

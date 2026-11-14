@@ -2,6 +2,26 @@
 
 重活放在 Windows GPU 代理上，Linux 控制器只做检出、打包与轻量检查。流水线定义为 `ci/Jenkinsfile`，任务名 `winter_survival`。
 
+## 0. 接入方式（2026-11-14 配置，主代理实测）
+
+| 项 | 配置 |
+|---|---|
+| 源码 | 用户级 systemd 服务 `git-daemon-pixel.service`（`~/.config/systemd/user/`）以只读方式导出 `~/dev` 下的若干仓库，本仓库已加入其白名单；地址 `git://127.0.0.1/winter_survival` |
+| 任务 | Jenkins `winter_survival`，由 `delve-starter` 任务的 XML 复制而来（只改仓库地址与描述）：Pipeline from SCM，分支 `*/main`，脚本 `ci/Jenkinsfile`，轻量检出，`pollSCM H/2 * * * *`，保留 20 次构建，禁止并发 |
+| 管理 | `java -jar ~/.config/jenkins/jenkins-cli.jar -s http://localhost:8080/ -auth @~/.config/jenkins/ci_auth <命令>`（`get-job` / `update-job` / `build winter_survival -s -v`） |
+| 基线 | #1（初始提交 `40a079d`）SUCCESS：Linux 资产检查与 Python 单测通过；Windows 构建、单测、headless 探针 19/19、真 GPU 窗口截图 1280×720 |
+
+本地提交到 `main` 后，2 分钟内自动触发构建，无需推送。
+
+## 0.1 规划中的扩展（随里程碑加入）
+
+| 里程碑 | 新增步骤 |
+|---|---|
+| M1 | `zig build luatest -Dbackend=headless`；`tools/i18n_check.py` 与 `tools/bake_font.py --check` 进 `assets.py check`；内存浸泡探针；`grep` 禁止 `lua_util.getLua/manager.init`；Windows 交叉编译检查（手柄后端） |
+| M2 | `engine_ext.lua` 探针（含模糊输入）；截图改为家园场景 |
+| M4/M6 | 三份完整循环探针 `loop_keyboard/loop_mouse/loop_pad.lua` 替换脚手架 `smoke.lua` 成为门禁 |
+| M3/M10 | `zig build balance -Dbackend=headless`（500 局批量模拟）作为夜间任务或手动参数，报告归档为 HTML |
+
 ## 1. 阶段
 
 | 阶段 | 节点 | 内容 |
