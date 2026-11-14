@@ -18,7 +18,6 @@ local function wait(sec)
   local untl = now + sec
   while now < untl do
     coroutine.yield()
-    now = now + 1 / 60
   end
 end
 
@@ -107,4 +106,11 @@ local function scenario()
   probe.finish()
 end
 
-return scenario
+local co = coroutine.create(scenario)
+
+function _probe(t, dt)
+  now = t
+  if coroutine.status(co) == "dead" then return end
+  local ok, err = coroutine.resume(co)
+  if not ok then error(err, 0) end
+end

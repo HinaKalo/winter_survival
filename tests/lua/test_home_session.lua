@@ -188,9 +188,9 @@ function T.three_days_at_home()
       if ch.status == "alive" then
         local list = hs.actions(s, cid)
         local eat = find(list, "eat")
-        if eat and eat.enabled and ch.needs.hunger < 60 then hs.act(s, cid, "eat") end
+        if eat and eat.enabled and ch.needs.food < 60 then hs.act(s, cid, "eat") end
         local drink = find(list, "drink")
-        if drink and drink.enabled and ch.needs.thirst < 60 then hs.act(s, cid, "drink") end
+        if drink and drink.enabled and ch.needs.water < 60 then hs.act(s, cid, "drink") end
         if not ch.job then
           for _, a in ipairs(hs.actions(s, cid)) do
             if a.kind == "craft" and a.enabled then
