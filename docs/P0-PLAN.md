@@ -441,3 +441,38 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 |---|---|---|---|
 | A1 | `verify_steps.main` 在 zig 不存在 / 没有 `build.zig` 时 `return 2`，不归档 | 不接受：两者是基础设施错误，发生在任何步骤之前，本轮不可能产出报告或夹具 | `test_ci_archive` 注释说明 |
 | A2 | 探针选择失败分支的归档无测试 | 接受（缺测试，实现已覆盖） | `test_ci_archive.test_main_collects_on_probe_selection_error` |
+
+### 9.5 契约回改（2026-11-14）
+
+依 §9.1 “设计文档优先”（Q1、Q2、Q9、Q16）就地回改了 PARALLEL-PLAN §2 的 C3、C6、C7、C8、C9 与 PLAN §4.4。此后 P0-4 以 PARALLEL-PLAN §2 为准；本文 §3.4 的 C3、C6–C9 段、§7 的 Q1、Q2、Q9、Q16 行与 §8 第 4–7 条里的旧名字已作废。
+
+| 契约 | 旧 → 新 |
+|---|---|
+| C3 事件名 | `char.died` → `char_died`；`story.ready` → `storylet_ready`；`weather.snap_warning` → `snap_warning`（设计文档 PLAN §4.4 的写法）。“事件名带域前缀”的总则改为“以设计文档为准，未定名的暂沿用 `<域>.<动作>`” |
+| C6 `kind` | `kind` → `verb`；取值改为 NARRATIVE §2.4 / WORLD §2.2 的动词表（`steal/rob/assault/knockout/kill/spare/help/give/trade_fair/trade_cheat/refuse_help/abandon/betray/rescue/bury/confess/return_goods/inform/die`）；旧值 `break_in`、`intimidate` 删除（设计文档里是 `steal/rob` 加标签 `armed_threat`），`takedown` → `knockout`，`trade` → `trade_fair`/`trade_cheat` |
+| C6 同行者 | `accomplices` → `squad`（样例含 actor 本人） |
+| C6 对象 | `target = { type, id }` → `target = "npc.<id>"`（队友为角色 id）+ `target_kind = civilian/raider/soldier/trader/teammate/nobody`（原 `household/npc/faction/party` 删除） |
+| C6 目击 | `witnessed` → `witnesses`（活着的目击者 `npc.<id>` 列表） |
+| C6 轻重 | `severity = 0..3` → `magnitude = 0..1` |
+| C6 其他 | `evidence`、`data`、`minute` 删除；新增 `tags`（WORLD §2.2 标签表）与 `phase`（day/dusk/night/dawn）；`id` 递增、`day`、`phase` 由 `deeds.record` 填，接口不变 |
+| C7 | 函数签名不变（`raid.begin/commit/autoresolve`）；注明与 PLAN §4.4 统一。PLAN §4.4 的 `sim.raid_begin/commit/autoresolve` → `raid.begin/commit/autoresolve`，参数 `loc` → `loc_id` |
+| C8 `distance_min` | → `travel_min`（WORLD §1.3） |
+| C8 `danger = 0..3` | → `raid_difficulty = 1..5`（WORLD §6.1 “夜袭难度”；设计文档只有中文名，英文字段名为本次所取，见下待裁决 #8）；另增 WORLD §8 的 `guard 0..3` |
+| C8 占用 | `occupancy` → `occ`（WORLD §8 `loc.<id>.occ`），取值仍为 empty/civilian/trader/hostile |
+| C8 其他 | `id` 取原型 id（WORLD §1.3，不再是 `suburb_02` 式）；新增 `state`、`attitude`、`food_days`、`members_alive`、`visits`、`looted`（WORLD §8 `loc.<id>.*`）；`unlock_day` 可为 nil（线索解锁）；`variant` 保留 |
+| C9 挂点 | `dawn, day_start, door, radio, talk, dusk, raid_enter, raid_container, raid_npc, raid_after, trade_open, crisis`（12 个）→ `door_day, radio, dawn, dusk, home_idle, raid_enter, raid_found, travel, dream, talk, crisis`（11 个，NARRATIVE §2.7）。删除 `day_start`、`raid_container`、`raid_npc`、`raid_after`、`trade_open`；`door` → `door_day`；新增 `home_idle`、`raid_found`、`travel`、`dream` |
+| PLAN §4.4 随机流 | `rng = { story, loot, combat, worldgen }` → 加 `health`、`weather`（与 `sim/state.lua` 的 `STREAMS` 一致）；NARRATIVE §2.9 的 `fx` 代码没有，仅在注释里列出 |
+| PLAN §4.4 事件 | `bus` 说明里的名字不变（`char_died`、`storylet_ready`、`snap_warning`），补指向 PARALLEL-PLAN C3 目录 |
+
+**待裁决（设计文档之间的矛盾，不由本节拍板；详见主代理报告）**：
+
+| # | 矛盾 | 暂行写法 |
+|---|---|---|
+| 1 | 地点 id：NARRATIVE §2.4 样例 `loc = "suburb_02"` ↔ WORLD §1.3/§6.1 id = 原型 id、每原型一处 | C8 按 WORLD |
+| 2 | 布局编号：WORLD §8 `loc.<id>.layout` 为数字 ↔ WORLD §6.2 / M2 变体为字母 A/B | C8 保留 `variant` |
+| 3 | checkpoint_kilo 占用：WORLD §6.1 “敌对 100（官方）”与备注“占用固定为哨站” ↔ §8 `occ` 只有四值 | 按 `hostile` |
+| 4 | `loc.<id>.state` 含 hostile/empty，与 `occ` 重叠；§9.3 又用 `loc_state(.., "alert")`，不在 §8 枚举内 | 照 §8 枚举，`alert` 未收 |
+| 5 | 随机流：NARRATIVE §2.9 有 `fx` ↔ PLAN §4.4 无 `fx` ↔ 代码有 `health`、`weather` | 取代码，`fx` 待定 |
+| 6 | 事件名：PLAN §4.4 扁平 snake_case ↔ PARALLEL-PLAN C3 域前缀 | 三个设计名扁平，其余暂留 |
+| 7 | 动词表：NARRATIVE §2.4 列表无 `die`，WORLD §9.1 `psy_teammate_death` 用 `verb=die`；`break_in`/`intimidate`、`target` 的队友/势力格式设计文档未规定 | 加入 `die`；其余按上表 |
+| 8 | “夜袭难度”无英文字段名；facts 黑板里的 `loc.*` 与 `world.locations` 字段是派生视图还是各存一份（PLAN §4.4 vs WORLD §8） | `raid_difficulty`；字段同名 |

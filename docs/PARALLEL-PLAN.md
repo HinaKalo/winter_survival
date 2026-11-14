@@ -71,9 +71,9 @@ P0 完成的标志：以上全部合入 main，主代理在 PLAN §6 记一笔�
 
 ### C3 事件（拥有者：发出方）
 
-- `core/bus.lua` 不变。事件名带域前缀：`home.*`、`clock.*`、`char.*`、`raid.*`、`world.*`、`story.*`。
+- `core/bus.lua` 不变。事件名以设计文档（PLAN §4.4）为准：`char_died`、`storylet_ready`、`snap_warning`。设计文档尚未定名的事件，暂沿用 `<域>.<动作>` 写法（`clock.*`、`home.*`、`raid.*`、`world.*`），待设计文档补定后按设计文档改名（走 §5 流程）。
 - 目录 `sim/events.lua`：每个事件一行 `name = { fields... }`，按域分段；**只追加**，追加时写在自己域的段末尾（这样合并冲突只会是相邻行，手工解决很简单）。
-- P0 预置：`clock.phase_changed`、`clock.day_started`、`char.died`、`char.wounded`、`char.left_party`、`char.joined_party`、`home.station_changed`、`home.room_temp_alert`、`weather.snap_warning`、`story.ready`、`raid.ended`。
+- P0 预置：`clock.phase_changed`、`clock.day_started`、`char_died`、`char.wounded`、`char.left_party`、`char.joined_party`、`home.station_changed`、`home.room_temp_alert`、`snap_warning`、`storylet_ready`、`raid.ended`。
 
 ### C4 查询层（拥有者：被查询子树的线）
 
@@ -90,24 +90,29 @@ P0 完成的标志：以上全部合入 main，主代理在 PLAN §6 记一笔�
 
 ### C6 行为记录（拥有者：STORY；RAID、WORLD、HOME 都会写）
 
-叙事的输入是行为账本。RAID、WORLD 在 STORY 完成前就要开始记录，所以 P0 先落定记录格式和一个只追加的最小实现：
+叙事的输入是行为账本。RAID、WORLD 在 STORY 完成前就要开始记录，所以 P0 先落定记录格式和一个只追加的最小实现。字段、取值以 NARRATIVE §2.4 为准，权重与标签以 WORLD §2.2 为准：
 
 ```lua
 deeds.record(state, {
-  kind = "steal" | "break_in" | "takedown" | "kill" | "intimidate" | "trade" | "refuse_help" | ...,  -- 种类表在 data/deed_kinds.lua，只追加
-  actor = char_id, accomplices = { char_id... },
-  target = { type = "household"|"npc"|"faction"|"party", id = "..." },
-  loc = location_id, day = n, minute = m,
-  witnessed = { npc_id... }, evidence = { "footprints", "blood", ... },
-  severity = 0..3, data = { ... },   -- 种类相关的附加字段
+  verb = "steal" | "rob" | "assault" | "knockout" | "kill" | "spare" | "help" | "give"
+       | "trade_fair" | "trade_cheat" | "refuse_help" | "abandon" | "betray"
+       | "rescue" | "bury" | "confess" | "return_goods" | "inform" | "die" | ...,  -- 动词表在 data/deed_kinds.lua，只追加；die 无动手者（WORLD §2.4）
+  actor = char_id,                         -- 动手的人
+  squad = { char_id... },                  -- 同行者（NARRATIVE §2.4 样例含 actor 自己）
+  target = "npc.<id>" | char_id | nil, target_kind = "civilian"|"raider"|"soldier"|"trader"|"teammate"|"nobody",
+  loc = location_id,
+  tags = { occupied = true, victim_vulnerable = true, took_essentials = true, lethal = false, ... },  -- 标签表见 WORLD §2.2，只追加
+  witnesses = { "npc.<id>"... },           -- 活着的目击者
+  magnitude = 0..1,                        -- 被拿走的东西对受害方有多要紧
+  -- id、day、phase 由 record 填：id 递增（返回值）；day、phase 取 state.clock，phase ∈ day|dusk|night|dawn
 }) -> deed_id
 ```
 
-字段语义以 WORLD 的反应规则为准；P0 的实现只做校验和追加，`reactors` 在 STORY 线实现。STORY 线可以给 `kind` 表追加种类、给 `data` 定细则，但不得改上面的顶层字段。
+字段语义以 NARRATIVE §2.4、WORLD §2.2/§2.4/§9 的反应规则为准；P0 的实现只做校验和追加，`reactors` 在 STORY 线实现。STORY 线可以给 `verb` 表追加动词、给 `tags` 追加标签，但不得改上面的顶层字段。
 
 ### C7 副本接口（拥有者：RAID；WORLD 提供输入）
 
-替换 M3 的临时 `sim/expedition.lua`：
+替换 M3 的临时 `sim/expedition.lua`（函数名即 PLAN §4.4 的突袭接口，不再有 `sim.raid_*`）：
 
 | 函数 | 说明 |
 |---|---|
@@ -121,13 +126,16 @@ P0 用 M3 `expedition` 的逻辑实现 `autoresolve` 的第一版，`begin/commi
 
 ```lua
 world.locations[id] = {
-  id, archetype, variant,                 -- 原型与布局变体（data/locations/<原型>.lua，格式见 M2-PLAN §2.1）
-  occupancy = "empty"|"civilian"|"trader"|"hostile",
-  unlocked = bool, unlock_day = n, distance_min = n,   -- 单程分钟
+  id, archetype, variant,                 -- id = 原型 id（WORLD §1.3）；布局变体（data/locations/<原型>.lua，格式见 M2-PLAN §2.1）
+  occ = "empty"|"civilian"|"trader"|"hostile",   -- 占用，WORLD §6.1、§8 的 loc.<id>.occ
+  state = "unknown"|"known"|"visited"|"hostile"|"empty"|"friendly"|"burned",   -- WORLD §8 的 loc.<id>.state
+  unlocked = bool, unlock_day = n | nil, travel_min = n,   -- 单程分钟，WORLD §1.3；条件解锁（线索）的 unlock_day 为 nil
+  raid_difficulty = 1..5,                 -- 夜袭难度，WORLD §6.1
+  guard = 0..3, attitude = -3..3, food_days = n, members_alive = n, visits = n, looted = n,   -- WORLD §8 的 loc.<id>.*
   containers = { [slot_id] = { items = {...}, locked = bool, searched = bool } },
   households = { household_id... }, npcs = { npc_id... },
   doors = { [door_id] = { locked = bool, broken = bool } },
-  danger = 0..3, last_raided_day = n | nil,
+  last_raided_day = n | nil,
 }
 ```
 
@@ -136,7 +144,7 @@ RAID 只读这张表（加上 `raid.commit` 写回 `containers`、`doors`、`las
 ### C9 片段挂点（拥有者：STORY；各场景调用）
 
 - 场景在固定时机调用 `story.pick(slot, ctx) -> instance | nil`，返回非空时压入 `ui/dialog` 模态。STORY 完成前 `story.pick` 恒返回 nil。
-- 挂点名冻结：`dawn`、`day_start`、`door`、`radio`、`talk`、`dusk`、`raid_enter`、`raid_container`、`raid_npc`、`raid_after`、`trade_open`、`crisis`。`ctx` 至少含 `state`、`loc`、`chars`；各挂点的附加字段写在 `sim/story.lua` 的文件头里。
+- 挂点名冻结（NARRATIVE §2.7）：`door_day`、`radio`、`dawn`、`dusk`、`home_idle`、`raid_enter`、`raid_found`、`travel`、`dream`、`talk`、`crisis`（共 11 个）。`ctx` 至少含 `state`、`loc`、`chars`；各挂点的附加字段写在 `sim/story.lua` 的文件头里。
 - `ui/dialog.lua` 归 STORY（UI-UX §8.8 的选项、灰显原因）。
 
 ## 3. 各线的范围与文件归属
@@ -168,7 +176,7 @@ RAID 只读这张表（加上 `raid.commit` 写回 `containers`、`doors`、`las
 
 - 范围：`scenes/raid.lua`（含防守模式）、`ai/perception.lua`、`ai/npc_fsm.lua`、`ai/squadmate.lua`、`sim/raid_rules.lua`、`sim/raid_resolve.lua`、`sim/cmd/raid.lua`、撬锁/搜刮/撤离、迟归惩罚、`ui/hud_raid.lua`；M7 的近战、枪械、制服、威吓、伤势与救援、死亡、打击反馈。C7 的正式实现。
 - 拥有：上面的文件；`data/` 里潜行与战斗数值所在段（CONTENT §7，放 `data/raid.lua`，不放进 `balance.lua`）；i18n 的 `raid`、`combat` 区。
-- 使用：C8（WORLD 完成前用手写夹具地点）；C6（行为一律经 `deeds.record` 记账）；C9（`raid_*` 挂点调用 `story.pick`）。
+- 使用：C8（WORLD 完成前用手写夹具地点）；C6（行为一律经 `deeds.record` 记账）；C9（`raid_enter`、`raid_found` 挂点调用 `story.pick`）。
 - 验收：PLAN §6 的 M6、M7 行。
 
 ### 3.5 STORY — 叙事引擎（M8）
