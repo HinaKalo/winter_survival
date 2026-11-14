@@ -233,6 +233,24 @@ function T.save_and_load_round_trip()
   assert(snap(s) == snap(s2), "continuing after load gives identical state")
 end
 
+-- M4L 审查第 1 轮（Codex P2）：睡觉再唤醒后，手上的任务继续推进（不白白停到下一个黎明）
+function T.wake_resumes_the_job()
+  local s = hs.new(17)
+  local cid = first_cid(s)
+  assert(hs.act(s, cid, "craft:clear_rubble"))
+  local ch = s.state.party.chars[cid]
+  assert(ch.job and ch.activity == "work")
+  assert(hs.act(s, cid, "sleep"))
+  assert(hs.act(s, cid, "wake"))
+  assert(ch.job and ch.activity == "work", "woken character goes back to work, got " .. tostring(ch.activity))
+  local jid = ch.job
+  local w0 = s.state.jobs[jid].work_remaining
+  hs.set_speed(s, 4)
+  for _ = 1, 8 do hs.update(s, 1.0) end -- 64 game minutes
+  local j = s.state.jobs[jid]
+  assert(j == nil or j.work_remaining < w0, "job progresses after waking")
+end
+
 function T.session_is_pure_model()
   local f = assert(io.open("assets/scripts/game/home_session.lua", "r"))
   local src = f:read("a")
