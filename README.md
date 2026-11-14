@@ -116,7 +116,7 @@ var gpa = std.heap.DebugAllocator(.{}){};
 | `ESC` | 退出 |
 | `~` | 打开 / 关闭控制台 |
 
-启动后默认进入标题界面；开发时可设置环境变量 `WS_SCENE=m2_demo` 直接进入 M2 地图演示（入口见 `assets/main.lua`）。
+启动后默认进入标题界面；开发时可用 `--scene m2_demo --dev` 直接进入 M2 地图演示（不带 `--dev` 时 F2–F8 开发键无效；旧环境变量 `WS_SCENE` 仍可用到 M4 结束；入口见 `assets/main.lua`）。
 
 ## 架构
 
