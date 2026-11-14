@@ -441,3 +441,8 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 |---|---|---|---|
 | A1 | `verify_steps.main` 在 zig 不存在 / 没有 `build.zig` 时 `return 2`，不归档 | 不接受：两者是基础设施错误，发生在任何步骤之前，本轮不可能产出报告或夹具 | `test_ci_archive` 注释说明 |
 | A2 | 探针选择失败分支的归档无测试 | 接受（缺测试，实现已覆盖） | `test_ci_archive.test_main_collects_on_probe_selection_error` |
+
+### 9.6 balance 基线（2026-11-14）
+
+- **p0-baseline**：CI #11（full，main 4c0b3f 之前的 W0-ci-archive 快照，游戏代码同 main）。balance 通过，`determinism.ok = true`，checksum `bf553e5f`。报告存于 `ci/baselines/balance_p0.json`。同次 luatest 仅 `test_layering` 3 项失败（Windows 无 `popen`，P0-0 修复）。
+- 对比：`python3 tools/balance_diff.py ci/baselines/balance_p0.json <out>/windows/balance/report.json [--exact]`。`--exact` 用于 P0-2 阶段 A 与 P0-4 的 C7 搬运；默认（摘要，去掉 checksum 与 determinism.a/b）用于其余步骤。checksum 获准变化后，新报告覆盖 `ci/baselines/balance_p0.json` 并在此追加一行。
