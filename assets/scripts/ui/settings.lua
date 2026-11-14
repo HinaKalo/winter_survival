@@ -57,6 +57,7 @@ function M.apply(s)
   if s.bindings then
     input.import_bindings(s.bindings)
   end
+  input.set_hold_s(s.accessibility.hold_duration)
 end
 
 function M.load()
@@ -308,7 +309,7 @@ function M:draw()
       i18n.t("settings.acc.hold_duration"), s.accessibility.hold_duration, 0.4, 1.5, 0.1, {
         sub_group = "content",
         format = function(v) return string.format("%.1fs", v) end,
-        on_change = function(nv) s.accessibility.hold_duration = nv end,
+        on_change = function(nv) s.accessibility.hold_duration = nv; input.set_hold_s(nv) end,
       })
     widgets.toggle("set_acc_rf", { x = cx, y = ry + 192, w = cw, h = 44 },
       i18n.t("settings.acc.reduce_flash"), s.accessibility.reduce_flash, {

@@ -263,7 +263,7 @@ local function fmt_time(h)
 	return string.format("%02d:%02d", math.floor(total / 60), total % 60)
 end
 
-local KEY_LABELS = { COMMA = ",", PERIOD = ".", ESCAPE = "Esc" }
+local KEY_LABELS = { ESCAPE = "Esc" }
 
 local function key_of(action)
 	local t = input.format_binding("keyboard", input.get_binding("keyboard", action, 1))
