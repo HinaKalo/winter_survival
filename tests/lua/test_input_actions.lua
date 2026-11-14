@@ -390,6 +390,46 @@ function T.dev_panel_only_in_dev_mode()
   end)
 end
 
+-- P0-3 审查第 1 轮（Codex F1）：dev.* 动作与 dev_panel 同样受 set_dev 门控
+function T.dev_actions_gated_by_dev_mode()
+  with_fake(function()
+    local dev_ids = {}
+    for _, a in ipairs(input.ACTIONS) do
+      if a.id:sub(1, 4) == "dev." then dev_ids[#dev_ids + 1] = a.id end
+    end
+    assert(#dev_ids == 6, "six dev.* actions, got " .. #dev_ids)
+    for _, on in ipairs({ false, true }) do
+      input.set_dev(on)
+      for _, id in ipairs(dev_ids) do
+        local b = input.get_binding("keyboard", id, 1)
+        assert(b and b.key, id .. " has a keyboard default")
+        local f = run_case({ device = "keyboard", b = b }, 0.1)
+        if on then
+          assert(f[id], id .. " fires in dev mode")
+        else
+          assert(not f[id], id .. " must not fire when set_dev(false)")
+        end
+      end
+    end
+  end)
+end
+
+-- P0-3 审查第 1 轮（Codex F2）：摇杆方向绑定同样参与短按/长按配对
+function T.stick_direction_short_long_pairing()
+  with_fake(function()
+    local sd = { axis = "rs", dir = "down" }
+    assert(input.set_binding("pad", "camera_center", 1, sd))
+    assert(input.set_binding("pad", "interact", 1, sd))
+    local tap = run_case({ device = "pad", b = sd }, 0.1)
+    assert(tap.interact and tap.interact.count == 1 and tap.interact.at_release,
+      "paired short on a stick direction fires once, on release")
+    assert(not tap.camera_center, "short tap does not fire the hold action")
+    local long = run_case({ device = "pad", b = sd }, input.HOLD_S + 0.3)
+    assert(long.camera_center and long.camera_center.count == 1, "hold fires once")
+    assert(not long.interact, "hold suppresses the paired short (no press-frame fire, no repeat)")
+  end)
+end
+
 function T.pan_vec()
   with_fake(function()
     frame()
