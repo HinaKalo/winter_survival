@@ -363,7 +363,6 @@ return {
   ["home.reason.specialist_away"] = "专家不在家",
   ["home.reason.unknown_recipe"] = "未知配方",
   ["home.reason.unknown_tech"] = "未知科技",
-  ["home.reason.bad_room"] = "房间无效",
   ["home.reason.not_blueprint"] = "不是图纸",
   ["home.reason.wrong_phase"] = "时段不对",
   ["home.act.eat"] = "进食",

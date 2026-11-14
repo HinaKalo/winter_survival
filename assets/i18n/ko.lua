@@ -363,7 +363,6 @@ return {
   ["home.reason.specialist_away"] = "Specialist away",
   ["home.reason.unknown_recipe"] = "Unknown recipe",
   ["home.reason.unknown_tech"] = "Unknown tech",
-  ["home.reason.bad_room"] = "Bad room",
   ["home.reason.not_blueprint"] = "Not a blueprint",
   ["home.reason.wrong_phase"] = "Wrong time of day",
   ["home.act.eat"] = "Eat",
