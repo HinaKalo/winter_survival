@@ -9,7 +9,7 @@ local M = {}
 
 M.TOP_H = 34
 M.CARD_W = 200
-M.CARD_H = 76
+M.CARD_H = 82
 M.CARD_GAP = 4
 M.MENU_W = 330
 M.MENU_ROW = 26
@@ -159,7 +159,7 @@ function M.draw_cards(h, selected)
         local col, row = k % 2, math.floor(k / 2)
         local bw = math.floor((r.w - 20) / 2)
         widgets.progress_bar(
-          { x = r.x + 8 + col * (bw + 4), y = r.y + 38 + row * 18, w = bw, h = 16 },
+          { x = r.x + 8 + col * (bw + 4), y = r.y + 42 + row * 18, w = bw, h = 16 },
           v, 100,
           { color = need_bar_color(key, v), text = i18n.t("home.need." .. key), text_color = theme.colors.text })
         k = k + 1
