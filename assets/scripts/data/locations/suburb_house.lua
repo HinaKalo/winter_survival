@@ -33,9 +33,9 @@ return {
 				living  = { x = 2, y = 5 },
 				bedroom = { x = 8, y = 2 },
 			},
-			-- name = key of data/lights.lua (ART-AUDIO §3.3); radius/colour come from that table.
+			-- source = key of data/lights.lua (ART-AUDIO §3.3); radius/colour come from that table.
 			lights = {
-				{ name = "lamp", x = 2, y = 2 },
+				{ source = "lamp", x = 2, y = 2 },
 			},
 		},
 	},

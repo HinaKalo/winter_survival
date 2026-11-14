@@ -47,12 +47,12 @@ return {
 				{ id = "out_streetlight", x = 16, y = 27, frame = 1 },
 				{ id = "out_streetlight", x = 44, y = 36, frame = 1 },
 			},
-			-- name = key of data/lights.lua (ART-AUDIO §3.3); radius/colour come from that table.
+			-- source = key of data/lights.lua (ART-AUDIO §3.3); radius/colour come from that table.
 			lights = {
-				{ name = "street", x = 16, y = 27 },
-				{ name = "street", x = 44, y = 36 },
-				{ name = "lamp", x = 10, y = 12 },
-				{ name = "lamp", x = 44, y = 12 },
+				{ source = "street", x = 16, y = 27 },
+				{ source = "street", x = 44, y = 36 },
+				{ source = "lamp", x = 10, y = 12 },
+				{ source = "lamp", x = 44, y = 12 },
 			},
 			player_spawn = { x = 31, y = 32 },
 			npc_patrol = {

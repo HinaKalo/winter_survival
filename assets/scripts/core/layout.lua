@@ -1,8 +1,16 @@
 -- 地点/家园模板的纯解析（M2 L3 与 M3 共用）。
 -- 不 require 任何引擎库，也不 require view/。输出是普通表：
---   { width, height, cells[y][x], rooms[id], openings }
--- 房间 = 被墙和门隔开的室内地面连通区域。
+--   { id, variant, width, height,
+--     cells = flat row-major list of cell tables ({x, y, kind, material, prop, room, ...}),
+--     grid[y+1][x+1] = the same cell tables (use layout.cell(l, x, y)),
+--     rooms[id] = { id, name, area, cells = {cell...} (count = area),
+--                   envelope = {wall, hole, window, broken_window, board, door, door_open},
+--                   openings = {{kind, x, y, room, outer}},
+--                   links = {{room, kind = "door"|"wall", count, cells}} (one entry per kind) },
+--     room_order, openings, props = {{x, y, prop, slot, room}}, ... }
+-- 房间 = 被墙和门隔开的室内地面连通区域。畸形模板返回 nil, err，绝不抛错。
 local legend = require("data.legend")
+local util = require("core.util")
 
 local M = {}
 
@@ -55,23 +63,37 @@ function M.parse(template, variant, opts)
   opts = opts or {}
   if type(template) ~= "table" then return nil, "layout: template must be a table" end
   variant = variant or "A"
-  local v = template.variants and template.variants[variant] or template
+  local v
+  if type(template.variants) == "table" and template.variants[variant] ~= nil then
+    v = template.variants[variant]
+  else
+    v = template
+  end
   if type(v) ~= "table" or type(v.grid) ~= "table" then return nil, "layout: missing grid" end
-
+  if #v.grid == 0 then return nil, "layout: empty grid" end
+  for y = 1, #v.grid do
+    if type(v.grid[y]) ~= "string" then return nil, "layout: row " .. y .. " is not a string" end
+  end
   local width = #v.grid[1]
   if width == 0 then return nil, "layout: empty grid" end
   for y = 1, #v.grid do
-    if type(v.grid[y]) ~= "string" then return nil, "layout: row " .. y .. " is not a string" end
     if #v.grid[y] ~= width then
       return nil, "layout: row " .. y .. " has length " .. #v.grid[y] .. ", want " .. width
     end
   end
 
   local symbols = symbol_table()
+  if v.legend ~= nil and type(v.legend) ~= "table" then return nil, "layout: legend must be a table" end
   local custom = v.legend or {}
-  for sym, def in pairs(custom) do
+  for _, sym in ipairs(util.sorted_keys(custom)) do
+    local def = custom[sym]
+    if type(sym) ~= "string" or #sym ~= 1 then
+      return nil, "layout: legend key must be a single character: " .. tostring(sym)
+    end
+    if type(def) ~= "table" then return nil, "layout: legend entry " .. sym .. " is not a table" end
     symbols[sym] = { kind = "prop", prop = def.prop, slot = def.slot, opaque = def.opaque }
   end
+  if v.rooms ~= nil and type(v.rooms) ~= "table" then return nil, "layout: rooms must be a table" end
 
   local grid = {}
   local rooms = {}
@@ -148,8 +170,33 @@ function M.parse(template, variant, opts)
 
   -- anchors: map cell -> semantic room id
   local anchors = {}
-  for id, a in pairs(v.rooms or {}) do
-    anchors[a.y .. "," .. a.x] = id
+  for id in pairs(v.rooms or {}) do
+    if type(id) ~= "string" then
+      return nil, "layout: anchor id must be a string, got " .. type(id) .. " " .. tostring(id)
+    end
+  end
+  local anchor_ids = util.sorted_keys(v.rooms or {})
+  for _, id in ipairs(anchor_ids) do
+    local a = v.rooms[id]
+    if type(a) ~= "table" or type(a.x) ~= "number" or type(a.y) ~= "number" then
+      return nil, "layout: anchor " .. tostring(id) .. " needs numeric x and y"
+    end
+    if a.x % 1 ~= 0 or a.y % 1 ~= 0 then
+      return nil, "layout: anchor " .. id .. " needs integer x and y"
+    end
+    -- range check first: huge floats have no integer representation for %d / table keys
+    local where = "(" .. tostring(a.x) .. "," .. tostring(a.y) .. ")"
+    if a.x < 0 or a.y < 0 or a.x >= width or a.y >= #v.grid then
+      return nil, "layout: anchor " .. id .. " at " .. where .. " is not on an open cell (outside the grid)"
+    end
+    if not is_open(get(a.x, a.y)) then
+      return nil, "layout: anchor " .. id .. " at " .. where .. " is not on an open cell"
+    end
+    local k = a.y .. "," .. a.x
+    if anchors[k] then
+      return nil, "layout: duplicate anchor cell " .. k .. " for " .. tostring(anchors[k]) .. " and " .. tostring(id)
+    end
+    anchors[k] = id
   end
 
   for y = 0, #v.grid - 1 do
@@ -161,8 +208,10 @@ function M.parse(template, variant, opts)
         for _, c in ipairs(cells) do
           local a = anchors[c.y .. "," .. c.x]
           if a then
+            if id then
+              return nil, "layout: anchors " .. id .. " and " .. a .. " are in the same room (each room is claimed once)"
+            end
             id = a
-            break
           end
         end
         if not id then
@@ -173,9 +222,8 @@ function M.parse(template, variant, opts)
         local room = {
           id = id,
           name = "room." .. id .. ".name",
-          cells = #cells,
           area = #cells,
-          cell_list = cells,
+          cells = cells,
           openings = {},
           envelope = { wall = 0, hole = 0, window = 0, broken_window = 0, board = 0, door = 0, door_open = 0 },
           links = {},
@@ -190,21 +238,22 @@ function M.parse(template, variant, opts)
   end
 
   -- 4. room boundaries. Scan every wall/window/door once and attach to rooms.
-  local link_index = {}
+  local link_index, link_keys = {}, {}
   local openings = {}
+  local props = {}
   for _, cell in ipairs(cells_flat) do
     if cell.kind == "wall" or cell.kind == "window" or cell.kind == "door" then
-      local adjacent_rooms = {}
+      local adjacent_rooms, adjacent_seen = {}, {}  -- ids in DIRS order
       for _, d in ipairs(DIRS) do
         local nc = neighbor(grid, cell.x, cell.y, d[1], d[2])
-        if nc and is_open(nc) and nc.room then
-          adjacent_rooms[nc.room] = true
+        if nc and is_open(nc) and nc.room and not adjacent_seen[nc.room] then
+          adjacent_seen[nc.room] = true
+          adjacent_rooms[#adjacent_rooms + 1] = nc.room
         end
       end
       if cell.outer then
-        -- outer envelope belongs to the single adjacent room (or none)
-        local room_id
-        for id in pairs(adjacent_rooms) do room_id = id end
+        -- outer envelope belongs to the first adjacent room in DIRS order (or none)
+        local room_id = adjacent_rooms[1]
         if room_id then
           local room = rooms[room_id]
           local kind = cell.kind
@@ -223,43 +272,60 @@ function M.parse(template, variant, opts)
       else
         -- inner partition: connect the two rooms that touch it
         local ids = {}
-        for id in pairs(adjacent_rooms) do ids[#ids + 1] = id end
+        for i, id in ipairs(adjacent_rooms) do ids[i] = id end
         table.sort(ids)
         if #ids >= 2 then
-          local a, b = ids[1], ids[2]
-          local key = a .. "|" .. b
-          local idx = link_index[key]
-          if not idx then
-            idx = { a = a, b = b, wall = 0, door = 0, door_open = 0, cells = {} }
-            link_index[key] = idx
+          -- every pair of touching rooms gets a link (T-junctions touch 3+)
+          for i = 1, #ids - 1 do
+            for j = i + 1, #ids do
+              local a, b = ids[i], ids[j]
+              local key = a .. "|" .. b
+              local idx = link_index[key]
+              if not idx then
+                idx = { a = a, b = b, wall = 0, door = 0, wall_cells = {}, door_cells = {} }
+                link_index[key] = idx
+                link_keys[#link_keys + 1] = key
+              end
+              if cell.kind == "door" then
+                idx.door = idx.door + 1
+                idx.door_cells[#idx.door_cells + 1] = { x = cell.x, y = cell.y, kind = "door" }
+              else
+                idx.wall = idx.wall + 1
+                idx.wall_cells[#idx.wall_cells + 1] = { x = cell.x, y = cell.y, kind = cell.kind }
+              end
+            end
           end
-          if cell.kind == "door" then
-            idx.door = idx.door + 1
-          else
-            idx.wall = idx.wall + 1
-          end
-          idx.cells[#idx.cells + 1] = { x = cell.x, y = cell.y, kind = cell.kind }
-          local op = { kind = cell.kind, x = cell.x, y = cell.y, room = a, room2 = b, inner = true }
-          openings[#openings + 1] = op
+          openings[#openings + 1] = {
+            kind = cell.kind, x = cell.x, y = cell.y, room = ids[1], room2 = ids[2], inner = true,
+          }
         end
       end
     elseif cell.kind == "prop" then
       openings[#openings + 1] = { kind = "prop", x = cell.x, y = cell.y, prop = cell.prop }
+      props[#props + 1] = { x = cell.x, y = cell.y, prop = cell.prop, slot = cell.slot, room = cell.room }
     end
   end
 
-  for _, link in pairs(link_index) do
-    local la = rooms[link.a]
-    local lb = rooms[link.b]
-    la.links[#la.links + 1] = { room = link.b, kind = "door", count = link.door, wall = link.wall, cells = link.cells }
-    lb.links[#lb.links + 1] = { room = link.a, kind = "door", count = link.door, wall = link.wall, cells = link.cells }
-    la.link_index = la.link_index or {}
-    lb.link_index = lb.link_index or {}
-    la.link_index[link.b] = la.links[#la.links]
-    lb.link_index[link.a] = lb.links[#lb.links]
+  table.sort(link_keys)
+  for _, k in ipairs(link_keys) do
+    local link = link_index[k]
+    local function emit(from, to)
+      local list = rooms[from].links
+      if link.door > 0 then
+        list[#list + 1] = { room = to, kind = "door", count = link.door, cells = util.deep_copy(link.door_cells) }
+      end
+      if link.wall > 0 then
+        list[#list + 1] = { room = to, kind = "wall", count = link.wall, cells = util.deep_copy(link.wall_cells) }
+      end
+    end
+    emit(link.a, link.b)
+    emit(link.b, link.a)
   end
   for _, id in ipairs(room_order) do
-    table.sort(rooms[id].links, function(p, q) return p.room < q.room end)
+    table.sort(rooms[id].links, function(p, q)
+      if p.room ~= q.room then return p.room < q.room end
+      return p.kind < q.kind
+    end)
   end
 
   return {
@@ -274,6 +340,7 @@ function M.parse(template, variant, opts)
     rooms = rooms,
     room_order = room_order,
     openings = openings,
+    props = props,
     damage = v.damage,
     stations = v.stations,
     storage = v.storage,

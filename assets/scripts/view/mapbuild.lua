@@ -73,12 +73,13 @@ function M.plan(template, opts)
 
 	local tiledefs = {}
 	local cells, doors, props, roof = {}, {}, {}, {}
-	-- Lights: location data carries { name, x, y } only (name = key of data/lights.lua, ART-AUDIO §3.3).
+	-- Lights: location data carries { source, x, y } only (source = key of data/lights.lua, ART-AUDIO §3.3;
+	-- not `name`, which test_layering reserves for i18n keys). The plan entry calls it `name`.
 	local lights = {}
 	for _, lt in ipairs(v.lights or {}) do
-		assert(light_defs.sources[lt.name],
-			string.format("mapbuild.plan: unknown light %q (not in data/lights.lua)", tostring(lt.name)))
-		lights[#lights + 1] = { name = lt.name, x = lt.x, y = lt.y }
+		assert(light_defs.sources[lt.source],
+			string.format("mapbuild.plan: unknown light %q (not in data/lights.lua)", tostring(lt.source)))
+		lights[#lights + 1] = { name = lt.source, x = lt.x, y = lt.y }
 	end
 
 	local function use(name)
