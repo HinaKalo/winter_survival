@@ -109,6 +109,7 @@ stairs = {
 - 1F 房间的顶/地项不变（保持现有平衡）。
 - 黄昏/黎明报告里的室内平均温度（`home_session` 的 `avg_room_temp`）只按 1F 房间算（避免数字漂移）；`hs.hud(s).rooms` 每项增加 `floor`，`hs.hud(s).chars` 每项增加 `floor`（由 `ch.room` 推出）。
 - 角色位置仍是 `ch.room`；楼层由房间推出。
+- 游戏中途新建的房间（冷室 cold_cell，CONTENT 5.3）属于宿主房间（默认房间 living）所在楼层，`floor` 继承宿主；场景里没有模板锚点的房间用宿主房间的锚点（审查 r2 裁定）。
 
 ### 4.3 会话动作
 
