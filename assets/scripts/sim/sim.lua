@@ -230,11 +230,6 @@ function M.end_day(state)
 end
 
 function M.command(state, cmd)
-  if type(cmd) == "table" and cmd.kind == "end_day" then
-    local ok, err = M.end_day(state)
-    if not ok then state_mod.log(state, "command_failed", { kind = "end_day", err = err }) end
-    return ok, err
-  end
   return commands.run(state, cmd)
 end
 
