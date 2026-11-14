@@ -191,6 +191,7 @@ pub const World = struct {
         const right = cam.right();
         const up = Vec3.up;
         const normal = right.cross(up);
+        const vscale = cam.billboardVScale(); // same vertical stretch as render.zig rebuildSprites
         const denom = ray.dir.dot(normal);
         if (!std.math.isFinite(denom) or @abs(denom) < 1e-6) return 0;
 
@@ -208,9 +209,10 @@ pub const World = struct {
             const lx = d.dot(right);
             const ly = d.y;
             const half_w = e.size.x * 0.5;
-            if (lx < -half_w or lx > half_w or ly < 0 or ly > e.size.y) continue;
+            const full_h = e.size.y * vscale;
+            if (lx < -half_w or lx > half_w or ly < 0 or ly > full_h) continue;
             const u = std.math.clamp(lx / e.size.x + 0.5, 0.0, 1.0);
-            const v = std.math.clamp(1.0 - ly / e.size.y, 0.0, 1.0);
+            const v = std.math.clamp(1.0 - ly / full_h, 0.0, 1.0);
             const cand = Candidate{ .hit = .{ .id = e.id, .u = u, .v = v }, .t = t };
 
             // 插入排序，保持由近到远（t 升序）

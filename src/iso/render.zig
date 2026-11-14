@@ -503,8 +503,7 @@ pub const WorldRenderer = struct {
         b.reset();
         self.sprite_quads = 0;
 
-        const pitch_rad = std.math.degreesToRadians(cam.pitch);
-        const vscale = 1.0 / @cos(pitch_rad);
+        const vscale = cam.billboardVScale();
         const rot = camera_mod.billboardRotation(cam.yaw);
         const sc = Mat4.scale(Vec3.new(1, vscale, 1));
 

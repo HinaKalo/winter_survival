@@ -445,8 +445,12 @@ pub fn entity_set_size_px(id: i64, wpx: f32, hpx: f32) void {
     const e = ent(id) orelse return;
     const ppu = engine.camera.effectivePpu();
     if (ppu <= 0) return;
-    const pitch_cos = @max(@cos(std.math.degreesToRadians(engine.camera.pitch)), 0.1);
-    e.size = Vec2.new(wpx / ppu, (hpx / ppu) * pitch_cos);
+    e.size = Vec2.new(wpx / ppu, hpx / ppu);
+}
+
+pub fn entity_get_size(id: i64) ?[2]f32 {
+    const e = ent(id) orelse return null;
+    return .{ e.size.x, e.size.y };
 }
 
 pub fn entity_set_sheet(id: i64, sheet: i64) void {

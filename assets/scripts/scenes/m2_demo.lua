@@ -1,4 +1,4 @@
--- M2 demo scene (dev only: entered via WS_SCENE=m2_demo or --script, never from the title menu).
+-- M2 demo scene (dev only: entered via WS_SCENE=m2_demo, never from the title menu).
 -- street_block / suburb_house maps, exterior/cutaway, doors, hourly ambient light (time slider), FOV, fog, NPC cone.
 -- Env: WS_SCENE=m2_demo, WS_MAP=street_block|suburb_house, WS_MODE=exterior|cutaway,
 --      WS_PHASE=day|dusk|night|dawn or WS_HOUR=0..24.
@@ -64,6 +64,11 @@ local function build_world(keep_pos)
 		M.flash_on = M.player.flashlight_on
 	end
 
+	-- Pixel scale first: entity_set_size_px converts px to world units with the current ppu.
+	iso.camera_set_ppu(90.50967)
+	iso.camera_set_snap(true)
+	iso.camera_set_zoom(1.0)
+
 	lightfov.clear_lights() -- engine lights are wiped by mapbuild.apply
 	local template = require("data.locations." .. M.map)
 	local plan = mapbuild.plan(template, { mode = M.mode })
@@ -113,9 +118,6 @@ local function build_world(keep_pos)
 	iso.entity_set_tint(M.npc.id, 0.92, 0.78, 0.72, 1.0)
 	M.patrol_idx = 1
 
-	iso.camera_set_ppu(90.50967)
-	iso.camera_set_snap(true)
-	iso.camera_set_zoom(1.0)
 	iso.camera_follow(M.player.id)
 
 	lightfov.init({ hour = M.hour, indoor = is_indoor() })

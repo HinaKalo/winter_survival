@@ -68,7 +68,22 @@ function M.move_dir(actor, dx, dz, dt)
 		return
 	end
 	local step = math.max(0.35, (dt or 0.016) * 10)
-	iso.entity_move_to(actor.id, pos[1] + dx * step, pos[3] + dz * step)
+	local x, z = pos[1], pos[3]
+	local function walkable(px, pz)
+		return iso.map_walkable(math.floor(px), math.floor(pz))
+	end
+	local tx, tz = x + dx * step, z + dz * step
+	-- The goal is at most one tile away and every goal is kept on a walkable cell, so the straight
+	-- segment can only cross the two axis-neighbour cells; a diagonal needs both of them free too.
+	if walkable(tx, tz) and (dx == 0 or dz == 0 or (walkable(tx, z) and walkable(x, tz))) then
+		iso.entity_move_to(actor.id, tx, tz)
+	elseif dx ~= 0 and dz ~= 0 and walkable(tx, z) then
+		iso.entity_move_to(actor.id, tx, z) -- slide along x
+	elseif dx ~= 0 and dz ~= 0 and walkable(x, tz) then
+		iso.entity_move_to(actor.id, x, tz) -- slide along z
+	else
+		iso.entity_stop(actor.id)
+	end
 end
 
 function M.set_flashlight(actor, on)
