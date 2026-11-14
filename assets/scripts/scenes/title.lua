@@ -100,7 +100,7 @@ function M:draw()
   local items = {
     { id = "btn_continue", key = "title.continue", enabled = false, variant = "default" },
     { id = "btn_new_game", key = "title.new_game", enabled = true, variant = "primary",
-      action = function() widgets.show_toast(i18n.t("title.stub_notice"), 2.0) end },
+      action = function() scene.push(require("scenes.m2_demo")) end },
     { id = "btn_load", key = "title.load", enabled = true, variant = "default",
       action = function() widgets.show_toast(i18n.t("title.stub_notice"), 2.0) end },
     { id = "btn_settings", key = "title.settings", enabled = true, variant = "default",

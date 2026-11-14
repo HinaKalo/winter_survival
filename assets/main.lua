@@ -8,8 +8,10 @@ local focus = require("ui.focus")
 local widgets = require("ui.widgets")
 local settings = require("ui.settings")
 local title = require("scenes.title")
+local m2_demo = require("scenes.m2_demo")
 
 local autoquit_after = tonumber(os.getenv("ISO_AUTOQUIT") or "")
+local start_scene = os.getenv("WS_SCENE") or "title"
 local elapsed = 0
 
 function _init()
@@ -17,7 +19,11 @@ function _init()
   input.init()
   theme.init()
   settings.load()
-  scene.push(title)
+  if start_scene == "m2_demo" then
+    scene.push(m2_demo)
+  else
+    scene.push(title)
+  end
 end
 
 function _update(dt)

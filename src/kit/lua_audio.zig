@@ -28,6 +28,26 @@ pub fn stop_bgm(fade: f32) void {
     kit_audio.stopBgm(fade);
 }
 
+pub fn amb(layer: i64, id: [*:0]const u8, fade: f32) bool {
+    if (layer < 1 or layer > 3) return false;
+    return kit_audio.amb(@intCast(layer), std.mem.span(id), fade);
+}
+
+pub fn stop_amb(layer: i64, fade: f32) void {
+    if (layer < 1 or layer > 3) return;
+    kit_audio.stopAmb(@intCast(layer), fade);
+}
+
+pub fn amb_gain(layer: i64, v: f32, fade: f32) bool {
+    if (layer < 1 or layer > 3) return false;
+    return kit_audio.ambGain(@intCast(layer), v, fade);
+}
+
+pub fn current_amb(layer: i64) ?[]const u8 {
+    if (layer < 1 or layer > 3) return null;
+    return kit_audio.currentAmb(@intCast(layer));
+}
+
 pub fn set_bus(name: [*:0]const u8, v: f32) bool {
     return kit_audio.setBus(std.mem.span(name), v);
 }

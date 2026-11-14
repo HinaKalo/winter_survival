@@ -5,6 +5,9 @@ local ran = false
 
 local test_files = {
   "test_core",
+  "test_data_locations",
+  "test_facing",
+  "test_mapbuild",
 }
 
 local function run_suite(mod_name)

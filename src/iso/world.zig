@@ -7,29 +7,44 @@ const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
 const Allocator = std.mem.Allocator;
 const coords = @import("coords.zig");
+const camera = @import("camera.zig");
 const tilemap = @import("tilemap.zig");
+const lightmap = @import("lightmap.zig");
 pub const Dir = coords.Dir;
 pub const GridPos = coords.GridPos;
+const IsoCamera = camera.IsoCamera;
 const TileMap = tilemap.TileMap;
+const LightMap = lightmap.LightMap;
+
+pub const PickHit = struct {
+    id: u32,
+    u: f32,
+    v: f32,
+};
 
 pub const Entity = struct {
     id: u32 = 0,
+    gen: u16 = 0,
     alive: bool = false,
+    visible: bool = true,
+    lit: bool = true,
+    pickable: bool = true,
     pos: Vec3 = Vec3.zero, // 脚底
     size: Vec2 = Vec2.new(1, 1.5),
     sheet: u32 = 0,
     frame: u16 = 0,
     flip_x: bool = false,
     tint: colors.Color = colors.white,
+    light: [3]f32 = .{ 1, 1, 1 },
     anim_start: u16 = 0,
     anim_len: u16 = 0,
     anim_fps: f32 = 0,
     anim_time: f32 = 0,
     anim_loop: bool = true,
     speed: f32 = 3.0,
-    path: [64]GridPos = undefined,
-    path_len: u8 = 0,
-    path_idx: u8 = 0,
+    path: [256]GridPos = undefined,
+    path_len: u16 = 0,
+    path_idx: u16 = 0,
     move_goal: ?Vec3 = null,
     facing: Dir = .down,
     last_move: Vec2 = Vec2.zero,
@@ -68,13 +83,16 @@ pub const World = struct {
         sanitizeEntity(&ent);
         if (self.free.items.len > 0) {
             const slot = self.free.pop().?;
-            ent.id = slot + 1;
+            const gen = self.entities.items[slot].gen;
+            ent.gen = gen;
+            ent.id = (@as(u32, gen) << 16) | (slot + 1);
             self.entities.items[slot] = ent;
             return ent.id;
         }
-        // slot + 1 必须不溢出 u32
+        // slot + 1 必须能放入低 16 位且不为 0（1..65535）
         const slot: u32 = std.math.cast(u32, self.entities.items.len) orelse return error.TooManyEntities;
-        if (slot == std.math.maxInt(u32)) return error.TooManyEntities;
+        if (slot >= 65535) return error.TooManyEntities;
+        ent.gen = 0;
         ent.id = slot + 1;
         try self.entities.append(self.allocator, ent);
         return ent.id;
@@ -82,15 +100,25 @@ pub const World = struct {
 
     pub fn despawn(self: *World, id: u32) void {
         const e = self.get(id) orelse return;
+        const slot: u32 = (id & 0xFFFF) - 1;
         e.alive = false;
+        e.gen +%= 1;
         // 空间已预留不会失败的情况下才回收；失败则槽位仅不复用
-        self.free.append(self.allocator, id - 1) catch {};
+        self.free.append(self.allocator, slot) catch {};
+    }
+
+    pub fn clear(self: *World) void {
+        for (self.entities.items) |*e| {
+            if (e.alive) self.despawn(e.id);
+        }
     }
 
     pub fn get(self: *World, id: u32) ?*Entity {
-        if (id == 0 or id > self.entities.items.len) return null;
-        const e = &self.entities.items[id - 1];
-        if (!e.alive) return null;
+        const low = id & 0xFFFF;
+        if (low == 0 or low > self.entities.items.len) return null;
+        const e = &self.entities.items[low - 1];
+        const gen: u16 = @intCast(id >> 16);
+        if (!e.alive or e.gen != gen) return null;
         return e;
     }
 
@@ -98,7 +126,7 @@ pub const World = struct {
         const e = self.get(id) orelse return;
         const n = @min(path.len, e.path.len);
         for (0..n) |i| e.path[i] = path[i];
-        e.path_len = std.math.cast(u8, n) orelse 0; // n <= 64
+        e.path_len = std.math.cast(u16, n) orelse 0; // n <= 256
         e.path_idx = 0;
         e.move_goal = null;
     }
@@ -128,6 +156,72 @@ pub const World = struct {
             tickAnim(e, dt);
             tickMove(e, dt, map, cam_yaw);
         }
+    }
+
+    pub fn applyLight(self: *World, lm: *const LightMap, map: *const TileMap, dt_in: f32) void {
+        const dt = sanitizeDt(dt_in);
+        const k = std.math.clamp(dt * 12.0, 0.0, 1.0);
+        for (self.entities.items) |*e| {
+            if (!e.alive) continue;
+            if (!e.lit) {
+                e.light = .{ 1, 1, 1 };
+                continue;
+            }
+            const target: [3]f32 = if (map.worldToTile(e.pos)) |g|
+                lm.sample(g.x, g.y)
+            else
+                .{ 1, 1, 1 };
+            for (0..3) |c| {
+                e.light[c] += (target[c] - e.light[c]) * k;
+            }
+        }
+    }
+
+    pub fn pickCandidates(self: *const World, cam: *const IsoCamera, sx: f32, sy: f32, out: []PickHit) usize {
+        if (out.len == 0 or !std.math.isFinite(sx) or !std.math.isFinite(sy)) return 0;
+        const ray = cam.screenToRay(sx, sy);
+        const right = cam.right();
+        const up = Vec3.up;
+        const normal = right.cross(up);
+        const denom = ray.dir.dot(normal);
+        if (!std.math.isFinite(denom) or @abs(denom) < 1e-6) return 0;
+
+        const Candidate = struct { hit: PickHit, t: f32 };
+        var count: usize = 0;
+        var buf: [256]Candidate = undefined;
+
+        for (self.entities.items) |e| {
+            if (!e.alive or !e.visible or !e.pickable) continue;
+            if (e.size.x <= 0 or e.size.y <= 0) continue;
+            const t = e.pos.sub(ray.origin).dot(normal) / denom;
+            if (!std.math.isFinite(t) or t < 0) continue;
+            const p = ray.origin.add(ray.dir.scale(t));
+            const d = p.sub(e.pos);
+            const lx = d.dot(right);
+            const ly = d.y;
+            const half_w = e.size.x * 0.5;
+            if (lx < -half_w or lx > half_w or ly < 0 or ly > e.size.y) continue;
+            const u = std.math.clamp(lx / e.size.x + 0.5, 0.0, 1.0);
+            const v = std.math.clamp(1.0 - ly / e.size.y, 0.0, 1.0);
+            const cand = Candidate{ .hit = .{ .id = e.id, .u = u, .v = v }, .t = t };
+
+            // 插入排序，保持由近到远（t 升序）
+            var pos = count;
+            if (count == buf.len) {
+                if (t >= buf[count - 1].t) continue;
+                pos = count - 1;
+            } else {
+                count += 1;
+            }
+            while (pos > 0 and buf[pos - 1].t > t) : (pos -= 1) {
+                buf[pos] = buf[pos - 1];
+            }
+            buf[pos] = cand;
+        }
+
+        const n = @min(count, out.len);
+        for (0..n) |i| out[i] = buf[i].hit;
+        return n;
     }
 };
 
@@ -273,7 +367,8 @@ test "spawn / despawn / reuse" {
     try testing.expect(w.get(a) == null);
     w.despawn(a); // 重复无害
     const c = try w.spawn(.{ .sheet = 9 });
-    try testing.expectEqual(a, c);
+    try testing.expectEqual(@as(u32, (1 << 16) | 1), c);
+    try testing.expect(w.get(a) == null);
     try testing.expectEqual(@as(u32, 9), w.get(c).?.sheet);
     try testing.expect(w.get(c).?.alive);
     try testing.expect(w.get(0) == null);
@@ -332,10 +427,10 @@ test "setPath truncates to 64" {
     var w = World.init(testing.allocator);
     defer w.deinit();
     const id = try w.spawn(.{});
-    var big: [100]GridPos = undefined;
+    var big: [300]GridPos = undefined;
     for (&big, 0..) |*p, i| p.* = .{ .x = @intCast(i), .y = 0 };
     w.setPath(id, &big);
-    try testing.expectEqual(@as(u8, 64), w.get(id).?.path_len);
+    try testing.expectEqual(@as(u16, 256), w.get(id).?.path_len);
 }
 
 test "animation loop and non-loop" {
@@ -370,7 +465,8 @@ test "spawn reuse fully resets fields" {
     }
     w.despawn(a);
     const c = try w.spawn(.{});
-    try testing.expectEqual(a, c);
+    try testing.expectEqual(@as(u32, (1 << 16) | 1), c);
+    try testing.expect(w.get(a) == null);
     const e = w.get(c).?;
     try testing.expectEqual(@as(f32, 0), e.pos.x);
     try testing.expectEqual(@as(f32, 0), e.pos.y);
@@ -495,4 +591,43 @@ test "garbage input: moveTo / spawn / speed" {
     e.anim_len = 2;
     w.tick(0.1, &m, 0);
     try entFinite(w.get(c).?);
+}
+
+test "generational ids, clear, path 256 cap, and pickCandidates" {
+    var w = World.init(testing.allocator);
+    defer w.deinit();
+
+    const id1 = try w.spawn(.{ .pos = Vec3.new(2, 0, 2) });
+    try testing.expectEqual(@as(u32, 1), id1);
+    w.despawn(id1);
+    try testing.expect(w.get(id1) == null);
+
+    const id2 = try w.spawn(.{ .pos = Vec3.new(2, 0, 2) });
+    try testing.expect(id2 != id1);
+    try testing.expect(w.get(id1) == null);
+    try testing.expect(w.get(id2) != null);
+
+    var long_path: [300]GridPos = undefined;
+    for (&long_path, 0..) |*p, i| p.* = .{ .x = @intCast(i), .y = 0 };
+    w.setPath(id2, &long_path);
+    try testing.expectEqual(@as(u16, 256), w.get(id2).?.path_len);
+
+    w.clear();
+    try testing.expect(w.get(id2) == null);
+
+    // pickCandidates：近到远排序与 visible/pickable 过滤
+    var cam = IsoCamera{};
+    cam.target = Vec3.new(5, 0, 5);
+    cam.update(1280, 720);
+    const front = try w.spawn(.{ .pos = Vec3.new(5.5, 0, 5.5), .size = Vec2.new(1.5, 2.0) });
+    const back = try w.spawn(.{ .pos = Vec3.new(4.5, 0, 4.5), .size = Vec2.new(1.5, 2.0) });
+    _ = try w.spawn(.{ .pos = Vec3.new(5.0, 0, 5.0), .size = Vec2.new(1.5, 2.0), .visible = false });
+    _ = try w.spawn(.{ .pos = Vec3.new(5.0, 0, 5.0), .size = Vec2.new(1.5, 2.0), .pickable = false });
+
+    const sp = cam.worldToScreen(Vec3.new(5.0, 0.5, 5.0));
+    var hits: [8]PickHit = undefined;
+    const n = w.pickCandidates(&cam, sp.x, sp.y, &hits);
+    try testing.expectEqual(@as(usize, 2), n);
+    try testing.expectEqual(front, hits[0].id);
+    try testing.expectEqual(back, hits[1].id);
 }

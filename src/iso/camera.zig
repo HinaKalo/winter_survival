@@ -184,7 +184,7 @@ pub const IsoCamera = struct {
         return if (std.math.isFinite(v)) std.math.clamp(v, 1.0, 1.0e5) else 1.0;
     }
 
-    fn halfExtents(self: *const IsoCamera) Vec2 {
+    pub fn halfExtents(self: *const IsoCamera) Vec2 {
         const ppu = self.effectivePpu();
         if (ppu > 0) {
             const eff = ppu * self.safeZoom();

@@ -16,6 +16,8 @@ const mem = delve.mem;
 
 const engine = @import("engine.zig");
 const render = @import("render.zig");
+const tilemap = @import("tilemap.zig");
+const vision = @import("vision.zig");
 const world_mod = @import("world.zig");
 const coords = @import("coords.zig");
 
@@ -29,6 +31,7 @@ const ignore_fns = [_][:0]const u8{"bind"};
 
 /// 绑定 `iso` 库与全局 `keys` 表；由 script_host 在 Lua 启动后调用。
 pub fn bind(lua: *lua_util.Lua) void {
+    @setEvalBranchQuota(5000);
     const fns = comptime Reg.findLibraryFunctions(@This(), &ignore_fns);
     Reg.bindLibrary(lua, "iso", fns);
 
@@ -86,9 +89,9 @@ var path_buf: [1024][2]i32 = undefined;
 // ------------------------------------------------------------------ 地图
 
 pub fn map_create(w: i64, h: i64) void {
-    const ww = std.math.clamp(w, 1, 1024);
-    const hh = std.math.clamp(h, 1, 1024);
-    engine.map.resize(@intCast(ww), @intCast(hh)) catch {};
+    const ww: u32 = @intCast(std.math.clamp(w, 1, 1024));
+    const hh: u32 = @intCast(std.math.clamp(h, 1, 1024));
+    engine.resetMapSize(ww, hh) catch {};
 }
 
 pub fn map_size() [2]i32 {
@@ -112,13 +115,57 @@ pub fn tileset_load(path: [*:0]const u8, cols: i64, rows: i64) bool {
 }
 
 pub fn tile_define(top: i64, side: i64, solid: bool, liquid: bool) i64 {
+    return tile_define_ex(top, side, -1, solid, liquid, solid, 0);
+}
+
+pub fn tile_define_ex(top: i64, side: i64, side_cap: i64, solid: bool, liquid: bool, opaque_flag: bool, tag: i64) i64 {
+    const cap: u16 = if (side_cap < 0) 0xFFFF else clampU16(side_cap);
     const kind = engine.map.defineTile(.{
         .top = clampU16(top),
         .side = clampU16(side),
+        .side_cap = cap,
         .solid = solid,
         .liquid = liquid,
+        .@"opaque" = opaque_flag,
+        .tag = clampU8(tag),
     }) catch return 0;
     return kind;
+}
+
+pub fn map_set_height_unit(u: f32) void {
+    if (!fin(u) or u <= 0) return;
+    engine.map.height_unit = u;
+    engine.map.markAllDirty();
+}
+
+pub fn map_set_base_depth(d: f32) void {
+    if (!fin(d) or d < 0) return;
+    engine.map.base_depth = d;
+    engine.map.markAllDirty();
+}
+
+pub fn tile_set_blocked(x: i64, y: i64, b: bool) void {
+    engine.map.setFlag(i32Of(x), i32Of(y), tilemap.Flag.blocked, b);
+}
+
+pub fn tile_set_opaque(x: i64, y: i64, b: bool) void {
+    engine.map.setFlag(i32Of(x), i32Of(y), tilemap.Flag.@"opaque", b);
+}
+
+pub fn tile_set_tag(x: i64, y: i64, v: i64) void {
+    engine.map.setTag(i32Of(x), i32Of(y), clampU8(v));
+}
+
+pub fn tile_flags(x: i64, y: i64) ?[3]i32 {
+    const gx = i32Of(x);
+    const gy = i32Of(y);
+    if (!engine.map.inBounds(gx, gy)) return null;
+    const f = engine.map.getFlags(gx, gy);
+    return .{
+        if ((f & tilemap.Flag.blocked) != 0) 1 else 0,
+        if (engine.map.isOpaque(gx, gy)) 1 else 0,
+        engine.map.getTag(gx, gy),
+    };
 }
 
 pub fn map_set(x: i64, y: i64, kind: i64, height: i64) void {
@@ -148,15 +195,23 @@ pub fn map_can_step(fx: i64, fy: i64, tx: i64, ty: i64) bool {
     return engine.map.canStep(i32Of(fx), i32Of(fy), i32Of(tx), i32Of(ty));
 }
 
-pub fn path_find(x0: i64, y0: i64, x1: i64, y1: i64) ?[]const [2]i32 {
+fn findPathCommon(x0: i64, y0: i64, x1: i64, y1: i64, goal_adjacent: bool) ?[]const [2]i32 {
     const allocator = mem.getAllocator();
     var out: std.ArrayList(GridPos) = .empty;
     defer out.deinit(allocator);
-    const found = engine.map.findPath(allocator, .{ .x = i32Of(x0), .y = i32Of(y0) }, .{ .x = i32Of(x1), .y = i32Of(y1) }, &out) catch return null;
+    const found = engine.pathfinder.find(&engine.map, .{ .x = i32Of(x0), .y = i32Of(y0) }, .{ .x = i32Of(x1), .y = i32Of(y1) }, goal_adjacent, &out) catch return null;
     if (!found) return null;
     const n = @min(out.items.len, path_buf.len);
     for (out.items[0..n], 0..) |p, i| path_buf[i] = .{ p.x, p.y };
     return path_buf[0..n];
+}
+
+pub fn path_find(x0: i64, y0: i64, x1: i64, y1: i64) ?[]const [2]i32 {
+    return findPathCommon(x0, y0, x1, y1, false);
+}
+
+pub fn path_find_adjacent(x0: i64, y0: i64, x1: i64, y1: i64) ?[]const [2]i32 {
+    return findPathCommon(x0, y0, x1, y1, true);
 }
 
 // ------------------------------------------------------------------ 相机
@@ -307,7 +362,7 @@ pub fn entity_path_to(id: i64, tx: i64, ty: i64) bool {
     const allocator = mem.getAllocator();
     var out: std.ArrayList(GridPos) = .empty;
     defer out.deinit(allocator);
-    const found = engine.map.findPath(allocator, from, .{ .x = i32Of(tx), .y = i32Of(ty) }, &out) catch return false;
+    const found = engine.pathfinder.find(&engine.map, from, .{ .x = i32Of(tx), .y = i32Of(ty) }, false, &out) catch return false;
     if (!found) return false;
     engine.world.setPath(u, out.items);
     return true;
@@ -364,6 +419,67 @@ pub fn entity_set_tint(id: i64, r: f32, g: f32, b: f32, a: f32) void {
     if (!fin4(r, g, b, a)) return;
     const e = ent(id) orelse return;
     e.tint = colorOf(r, g, b, a);
+}
+
+pub fn entity_set_visible(id: i64, b: bool) void {
+    const e = ent(id) orelse return;
+    e.visible = b;
+}
+
+pub fn entity_set_lit(id: i64, b: bool) void {
+    const e = ent(id) orelse return;
+    e.lit = b;
+}
+
+pub fn entity_set_pickable(id: i64, b: bool) void {
+    const e = ent(id) orelse return;
+    e.pickable = b;
+}
+
+pub fn entity_set_size(id: i64, w: f32, h: f32) void {
+    if (!fin(w) or !fin(h) or w <= 0 or h <= 0) return;
+    const e = ent(id) orelse return;
+    e.size = Vec2.new(w, h);
+}
+
+pub fn entity_set_size_px(id: i64, wpx: f32, hpx: f32) void {
+    if (!fin(wpx) or !fin(hpx) or wpx <= 0 or hpx <= 0) return;
+    const e = ent(id) orelse return;
+    const ppu = engine.camera.effectivePpu();
+    if (ppu <= 0) return;
+    const pitch_cos = @max(@cos(std.math.degreesToRadians(engine.camera.pitch)), 0.1);
+    e.size = Vec2.new(wpx / ppu, (hpx / ppu) * pitch_cos);
+}
+
+pub fn entity_set_sheet(id: i64, sheet: i64) void {
+    const e = ent(id) orelse return;
+    const s = idOf(sheet) orelse return;
+    e.sheet = s;
+    e.anim_len = 0;
+    e.anim_fps = 0;
+}
+
+pub fn entity_pick(sx: f32, sy: f32, alpha_test: bool) ?i64 {
+    if (!fin(sx) or !fin(sy)) return null;
+    var hits: [32]world_mod.PickHit = undefined;
+    const n = engine.world.pickCandidates(&engine.camera, sx, sy, &hits);
+    if (n == 0) return null;
+    const tile_hit = engine.map.raycastPick(engine.camera.screenToRay(sx, sy), 200.0);
+    for (hits[0..n]) |hit| {
+        const e = engine.world.get(hit.id) orelse continue;
+        if (tile_hit) |th| {
+            const dist_e = e.pos.sub(engine.camera.screenToRay(sx, sy).origin).dot(engine.camera.forward());
+            const dist_t = th.point.sub(engine.camera.screenToRay(sx, sy).origin).dot(engine.camera.forward());
+            if (dist_t + 0.15 < dist_e) continue;
+        }
+        if (alpha_test) {
+            if (engine.renderer.alphaAt(e.sheet, e.frame, e.flip_x, hit.u, hit.v)) |a| {
+                if (a < 128) continue;
+            }
+        }
+        return hit.id;
+    }
+    return null;
 }
 
 /// 0..3 = down, left, right, up；实体不存在返回 0
@@ -441,4 +557,212 @@ pub fn fps() i32 {
 /// 窗口尺寸 {w, h}（像素）
 pub fn window_size() [2]i32 {
     return .{ papp.getWidth(), papp.getHeight() };
+}
+
+// ------------------------------------------------------------------ 相机像素基准
+
+pub fn camera_set_ppu(ppu: f32) void {
+    if (!std.math.isFinite(ppu) or ppu <= 0) {
+        engine.camera.pixels_per_unit = 0;
+        return;
+    }
+    engine.camera.pixels_per_unit = ppu;
+}
+
+pub fn camera_get_ppu() f32 {
+    return engine.camera.effectivePpu();
+}
+
+pub fn camera_set_snap(b: bool) void {
+    engine.camera.snap_pixels = b;
+}
+
+pub fn px_to_world(px: f32) f32 {
+    if (!fin(px)) return 0;
+    const ppu = engine.camera.effectivePpu();
+    if (ppu <= 0) return 0;
+    return px / ppu;
+}
+
+// ------------------------------------------------------------------ 视野 / 寻路 / 迷雾
+
+pub fn los(x0: i64, y0: i64, x1: i64, y1: i64) bool {
+    return vision.los(&engine.map, i32Of(x0), i32Of(y0), i32Of(x1), i32Of(y1));
+}
+
+pub fn vision_can_see(ox: i64, oy: i64, radius: f32, fx: f32, fy: f32, half_deg: f32, tx: i64, ty: i64) bool {
+    if (!fin(radius) or !fin(fx) or !fin(fy) or !fin(half_deg)) return false;
+    return vision.canSee(&engine.map, i32Of(ox), i32Of(oy), radius, .{ .fx = fx, .fy = fy, .half_angle_deg = half_deg }, i32Of(tx), i32Of(ty));
+}
+
+pub fn mask_clear(m: i64) void {
+    const id = idOf(m) orelse return;
+    const mask = engine.masks.get(id) orelse return;
+    mask.clear();
+}
+
+pub fn mask_or(dst: i64, src: i64) void {
+    const d_id = idOf(dst) orelse return;
+    const s_id = idOf(src) orelse return;
+    const dm = engine.masks.get(d_id) orelse return;
+    const sm = engine.masks.getConst(s_id) orelse return;
+    dm.orWith(sm);
+}
+
+pub fn mask_count(m: i64) i64 {
+    const id = idOf(m) orelse return 0;
+    const mask = engine.masks.getConst(id) orelse return 0;
+    return mask.count;
+}
+
+pub fn fov_compute(m: i64, ox: i64, oy: i64, radius: f32, fx: f32, fy: f32, half_deg: f32) i64 {
+    if (!fin(radius) or !fin(fx) or !fin(fy) or !fin(half_deg)) return 0;
+    const id = idOf(m) orelse return 0;
+    const mask = engine.masks.get(id) orelse return 0;
+    return vision.fov(&engine.map, i32Of(ox), i32Of(oy), radius, .{ .fx = fx, .fy = fy, .half_angle_deg = half_deg }, mask);
+}
+
+pub fn fov_visible(m: i64, x: i64, y: i64) bool {
+    const id = idOf(m) orelse return false;
+    const mask = engine.masks.getConst(id) orelse return false;
+    return mask.get(i32Of(x), i32Of(y));
+}
+
+pub fn reach_compute(m: i64, x: i64, y: i64, max_steps: i64) i64 {
+    const id = idOf(m) orelse return 0;
+    const mask = engine.masks.get(id) orelse return 0;
+    const steps: u32 = @intCast(std.math.clamp(max_steps, 0, 1024));
+    return engine.pathfinder.reach(&engine.map, .{ .x = i32Of(x), .y = i32Of(y) }, steps, mask) catch 0;
+}
+
+pub fn fog_set(visible_m: i64, explored_m: i64) void {
+    engine.lights.fog.visible = idOf(visible_m) orelse 0;
+    engine.lights.fog.explored = idOf(explored_m) orelse 0;
+    engine.lights.dirty_all = true;
+}
+
+pub fn fog_set_levels(explored_k: f32, unknown_k: f32) void {
+    if (!fin(explored_k) or !fin(unknown_k)) return;
+    engine.lights.fog.explored_k = std.math.clamp(explored_k, 0.0, 1.0);
+    engine.lights.fog.unknown_k = std.math.clamp(unknown_k, 0.0, 1.0);
+    engine.lights.dirty_all = true;
+}
+
+// ------------------------------------------------------------------ 光照
+
+pub fn light_set_ambient(r: f32, g: f32, b: f32) void {
+    if (!fin3(r, g, b)) return;
+    engine.lights.setAmbient(r, g, b);
+}
+
+pub fn light_add(x: f32, z: f32, radius: f32, r: f32, g: f32, b: f32) i64 {
+    if (!fin(x) or !fin(z) or !fin(radius) or !fin3(r, g, b)) return 0;
+    return engine.lights.add(.{
+        .x = x,
+        .z = z,
+        .radius = radius,
+        .color = .{ r, g, b },
+    });
+}
+
+pub fn light_set_pos(id: i64, x: f32, z: f32) void {
+    if (!fin(x) or !fin(z)) return;
+    const l = engine.lights.get(idOf(id) orelse return) orelse return;
+    l.x = x;
+    l.z = z;
+    l.dirty = true;
+}
+
+pub fn light_set_radius(id: i64, radius: f32) void {
+    if (!fin(radius)) return;
+    const l = engine.lights.get(idOf(id) orelse return) orelse return;
+    l.radius = radius;
+    l.dirty = true;
+}
+
+pub fn light_set_color(id: i64, r: f32, g: f32, b: f32) void {
+    if (!fin3(r, g, b)) return;
+    const l = engine.lights.get(idOf(id) orelse return) orelse return;
+    l.color = .{ r, g, b };
+    l.dirty = true;
+}
+
+pub fn light_set_enabled(id: i64, b: bool) void {
+    const l = engine.lights.get(idOf(id) orelse return) orelse return;
+    l.enabled = b;
+    l.dirty = true;
+}
+
+pub fn light_remove(id: i64) void {
+    engine.lights.remove(idOf(id) orelse return);
+}
+
+pub fn light_clear() void {
+    engine.lights.clear();
+}
+
+pub fn light_level(x: i64, y: i64) f32 {
+    return engine.lights.level(i32Of(x), i32Of(y));
+}
+
+// ------------------------------------------------------------------ 世界与覆盖层
+
+pub fn world_set_tint(r: f32, g: f32, b: f32) void {
+    if (!fin3(r, g, b)) return;
+    engine.renderer.setTint(colorOf(r, g, b, 1.0));
+}
+
+pub fn world_clear() void {
+    engine.clearWorld();
+    engine.overlays.clearAll();
+    engine.lights.clear();
+    for (1..vision.max_masks + 1) |i| {
+        if (engine.masks.get(@intCast(i))) |m| m.clear();
+    }
+}
+
+fn colorBytes(r: f32, g: f32, b: f32, a: f32) [4]u8 {
+    return .{
+        @intFromFloat(std.math.clamp(r * 255.0, 0.0, 255.0)),
+        @intFromFloat(std.math.clamp(g * 255.0, 0.0, 255.0)),
+        @intFromFloat(std.math.clamp(b * 255.0, 0.0, 255.0)),
+        @intFromFloat(std.math.clamp(a * 255.0, 0.0, 255.0)),
+    };
+}
+
+pub fn overlay_add(g: i64, x: i64, y: i64, r: f32, g2: f32, b: f32, a: f32) void {
+    if (!fin4(r, g2, b, a)) return;
+    const gi = idOf(g) orelse return;
+    engine.overlays.add(gi, i32Of(x), i32Of(y), colorBytes(r, g2, b, a));
+}
+
+pub fn overlay_add_tex(g: i64, x: i64, y: i64, atlas: i64, r: f32, g2: f32, b: f32, a: f32) void {
+    if (!fin4(r, g2, b, a)) return;
+    const gi = idOf(g) orelse return;
+    engine.overlays.addTex(gi, i32Of(x), i32Of(y), clampU16(atlas), colorBytes(r, g2, b, a));
+}
+
+pub fn overlay_add_mask(g: i64, m: i64, r: f32, g2: f32, b: f32, a: f32) void {
+    if (!fin4(r, g2, b, a)) return;
+    const gi = idOf(g) orelse return;
+    const mask = engine.masks.getConst(idOf(m) orelse return) orelse return;
+    engine.overlays.addMask(gi, mask, colorBytes(r, g2, b, a));
+}
+
+pub fn overlay_clear(g: i64) void {
+    const gi = idOf(g) orelse return;
+    engine.overlays.clear(gi);
+}
+
+pub fn overlay_clear_all() void {
+    engine.overlays.clearAll();
+}
+
+/// {tile_quads, chunks_rebuilt_last, chunks_drawn_last}
+pub fn render_stats() [3]i32 {
+    return .{
+        @intCast(engine.renderer.tile_quads),
+        @intCast(engine.renderer.chunks_rebuilt_last),
+        @intCast(engine.renderer.chunks_drawn_last),
+    };
 }

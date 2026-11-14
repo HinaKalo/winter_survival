@@ -1,0 +1,22 @@
+-- Material name -> tile atlas cell mapping (ART-AUDIO §4.2, 8x8 atlas, 64x64 cells).
+return {
+	snow           = { top = 0,  side = 48, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 1 },
+	snow_drift     = { top = 1,  side = 48, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 1 },
+	snow_packed    = { top = 2,  side = 48, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 1 },
+	ice            = { top = 3,  side = 49, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 2 },
+	asphalt        = { top = 4,  side = 50, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 3 },
+	asphalt_line   = { top = 5,  side = 50, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 3 },
+	sidewalk       = { top = 6,  side = 50, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 3 },
+	wood           = { top = 8,  side = 52, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 4 },
+	carpet         = { top = 10, side = 52, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 4 },
+	tile           = { top = 12, side = 52, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 4 },
+	concrete_floor = { top = 15, side = 52, side_cap = -1, solid = false, liquid = false, opaque = false, tag = 4 },
+	brick          = { top = 52, side = 24, side_cap = 60, solid = true,  liquid = false, opaque = true,  tag = 5 },
+	siding         = { top = 52, side = 26, side_cap = 60, solid = true,  liquid = false, opaque = true,  tag = 5 },
+	concrete       = { top = 52, side = 28, side_cap = 60, solid = true,  liquid = false, opaque = true,  tag = 5 },
+	plaster        = { top = 52, side = 32, side_cap = 60, solid = true,  liquid = false, opaque = true,  tag = 5 },
+	door_closed    = { top = 52, side = 40, side_cap = 61, solid = false, liquid = false, opaque = true,  tag = 6 },
+	door_open      = { top = 8,  side = 42, side_cap = 61, solid = false, liquid = false, opaque = false, tag = 6 },
+	window         = { top = 52, side = 43, side_cap = 61, solid = true,  liquid = false, opaque = false, tag = 7 },
+	roof_snow      = { top = 57, side = 54, side_cap = -1, solid = true,  liquid = false, opaque = true,  tag = 9 },
+}

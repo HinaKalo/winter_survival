@@ -27,9 +27,10 @@ pub const Stats = struct {
     bgm_started: i64 = 0,
 };
 
-pub const Bus = enum { master, sfx, bgm };
+pub const Bus = enum { master, sfx, bgm, amb };
 
 const voice_count = 24;
+const amb_layers = 3;
 const throttle_s: f64 = 0.03;
 const max_fade_s: f32 = 60.0;
 const max_fading = 4;
@@ -44,7 +45,7 @@ var catalog: ?cat_mod.Catalog = null;
 /// 与 catalog.entries 平行：上次播放的游戏时间
 var last_play: []f64 = &.{};
 var now: f64 = 0;
-var bus_vol = [3]f32{ 1, 1, 1 };
+var bus_vol = [4]f32{ 1, 1, 1, 1 };
 var stat: Stats = .{};
 
 var voices: [voice_count]?audio.Sound = [_]?audio.Sound{null} ** voice_count;
@@ -52,6 +53,9 @@ var next_voice: usize = 0;
 
 var cur_idx: ?usize = null;
 var cur_sound: ?audio.Sound = null;
+var amb_idx: [amb_layers]?usize = [_]?usize{null} ** amb_layers;
+var amb_sound: [amb_layers]?audio.Sound = [_]?audio.Sound{null} ** amb_layers;
+var amb_gain_val: [amb_layers]f32 = [_]f32{1.0} ** amb_layers;
 var fading: [max_fading]?Fading = [_]?Fading{null} ** max_fading;
 
 var warned: [max_warned]u64 = undefined;
@@ -74,12 +78,15 @@ pub fn register(c: Config) !void {
 
 fn resetState() void {
     now = 0;
-    bus_vol = .{ 1, 1, 1 };
+    bus_vol = .{ 1, 1, 1, 1 };
     stat = .{};
     voices = [_]?audio.Sound{null} ** voice_count;
     next_voice = 0;
     cur_idx = null;
     cur_sound = null;
+    amb_idx = [_]?usize{null} ** amb_layers;
+    amb_sound = [_]?audio.Sound{null} ** amb_layers;
+    amb_gain_val = [_]f32{1.0} ** amb_layers;
     fading = [_]?Fading{null} ** max_fading;
     warned_n = 0;
 }
@@ -132,6 +139,14 @@ fn onCleanup() !void {
     }
     cur_sound = null;
     cur_idx = null;
+    for (&amb_sound, &amb_idx) |*slot, *idx_slot| {
+        if (slot.*) |*s| {
+            s.stop();
+            s.requestDestroy();
+        }
+        slot.* = null;
+        idx_slot.* = null;
+    }
     for (&fading) |*slot| {
         if (slot.*) |*f| {
             f.sound.stop();
@@ -197,8 +212,8 @@ fn rejectSfx() bool {
     return false;
 }
 
-fn retireCurrent(fade_s: f32) void {
-    if (cur_sound) |*s| {
+fn retireSound(sound_slot: *?audio.Sound, idx_slot: *?usize, fade_s: f32) void {
+    if (sound_slot.*) |*s| {
         if (fade_s > 0) {
             s.fade(-1, 0, fade_s);
             var placed = false;
@@ -222,8 +237,12 @@ fn retireCurrent(fade_s: f32) void {
             s.requestDestroy();
         }
     }
-    cur_sound = null;
-    cur_idx = null;
+    sound_slot.* = null;
+    idx_slot.* = null;
+}
+
+fn retireCurrent(fade_s: f32) void {
+    retireSound(&cur_sound, &cur_idx, fade_s);
 }
 
 // ------------------------------------------------------------------ 对外 API
@@ -314,14 +333,81 @@ pub fn stopBgm(fade_s: f32) void {
     retireCurrent(std.math.clamp(fade_s, 0, max_fade_s));
 }
 
+pub fn amb(layer: u32, id: []const u8, fade_s: f32) bool {
+    if (!inited or catalog == null) return false;
+    if (layer < 1 or layer > amb_layers) return false;
+    if (!finite(fade_s)) return false;
+    const slot = layer - 1;
+    const c = &catalog.?;
+    const idx = c.indexOf(id) orelse {
+        warnOnce("unknown audio id", id);
+        return false;
+    };
+    const e = c.entries[idx];
+    if (e.kind != .bgm or !std.mem.startsWith(u8, id, "bgm/amb/")) {
+        warnOnce("amb requires bgm/amb/ id", id);
+        return false;
+    }
+    if (amb_idx[slot] == idx) return true;
+    const f = std.math.clamp(fade_s, 0, max_fade_s);
+    var new_sound: ?audio.Sound = null;
+    if (cfg.playback) {
+        new_sound = audio.playSound(e.path, .{
+            .stream = true,
+            .volume = effectiveVolume(e.volume, .amb, amb_gain_val[slot]),
+            .loop = true,
+            .fade_in_time = if (f > 0) f else null,
+        }) orelse {
+            warnOnce("failed to load sound", id);
+            return false;
+        };
+    }
+    retireSound(&amb_sound[slot], &amb_idx[slot], f);
+    amb_idx[slot] = idx;
+    amb_sound[slot] = new_sound;
+    return true;
+}
+
+pub fn stopAmb(layer: u32, fade_s: f32) void {
+    if (!inited or !finite(fade_s)) return;
+    if (layer < 1 or layer > amb_layers) return;
+    retireSound(&amb_sound[layer - 1], &amb_idx[layer - 1], std.math.clamp(fade_s, 0, max_fade_s));
+}
+
+pub fn ambGain(layer: u32, v: f32, fade_s: f32) bool {
+    if (!inited or !finite(v) or !finite(fade_s)) return false;
+    if (layer < 1 or layer > amb_layers) return false;
+    const slot = layer - 1;
+    amb_gain_val[slot] = std.math.clamp(v, 0, 1);
+    const f = std.math.clamp(fade_s, 0, max_fade_s);
+    if (amb_sound[slot]) |*s| {
+        if (catalog) |*c| {
+            if (amb_idx[slot]) |i| {
+                const target = effectiveVolume(c.entries[i].volume, .amb, amb_gain_val[slot]);
+                if (f > 0) s.fade(-1, target, f) else s.setVolume(target);
+            }
+        }
+    }
+    return true;
+}
+
 pub fn setBus(name: []const u8, v: f32) bool {
     if (!inited or !finite(v)) return false;
     const b = std.meta.stringToEnum(Bus, name) orelse return false;
     bus_vol[busIndex(b)] = std.math.clamp(v, 0, 1);
-    if (cur_sound) |*s| {
-        if (catalog == null) return true;
-        const c = &catalog.?;
-        if (cur_idx) |i| s.setVolume(effectiveVolume(c.entries[i].volume, .bgm, 1.0));
+    if (catalog == null) return true;
+    const c = &catalog.?;
+    if (b == .master or b == .bgm) {
+        if (cur_sound) |*s| {
+            if (cur_idx) |i| s.setVolume(effectiveVolume(c.entries[i].volume, .bgm, 1.0));
+        }
+    }
+    if (b == .master or b == .amb) {
+        for (&amb_sound, amb_idx, amb_gain_val) |*slot, idx_opt, gain| {
+            if (slot.*) |*s| {
+                if (idx_opt) |i| s.setVolume(effectiveVolume(c.entries[i].volume, .amb, gain));
+            }
+        }
     }
     return true;
 }
@@ -341,10 +427,41 @@ pub fn currentBgm() ?[]const u8 {
     return c.entries[i].id;
 }
 
+pub fn currentAmb(layer: u32) ?[]const u8 {
+    if (!inited or catalog == null) return null;
+    if (layer < 1 or layer > amb_layers) return null;
+    const c = &catalog.?;
+    const i = amb_idx[layer - 1] orelse return null;
+    return c.entries[i].id;
+}
+
 pub fn stats() Stats {
     return stat;
 }
 
 pub fn playbackEnabled() bool {
     return inited and cfg.playback;
+}
+
+test "kit_audio amb bus and layer bounds" {
+    const testing = std.testing;
+    resetState();
+    inited = true;
+    defer {
+        resetState();
+        inited = false;
+    }
+
+    try testing.expect(setBus("amb", 0.5));
+    try testing.expectEqual(@as(f32, 0.5), bus_vol[busIndex(.amb)]);
+    try testing.expect(!setBus("invalid", 0.5));
+
+    try testing.expect(!amb(0, "bgm/amb/wind", 0.5));
+    try testing.expect(!amb(4, "bgm/amb/wind", 0.5));
+    try testing.expect(!ambGain(0, 0.5, 0.1));
+    try testing.expect(!ambGain(4, 0.5, 0.1));
+    try testing.expect(ambGain(1, 0.7, 0.2));
+    try testing.expectEqual(@as(f32, 0.7), amb_gain_val[0]);
+    try testing.expect(currentAmb(1) == null);
+    try testing.expect(currentAmb(0) == null);
 }
