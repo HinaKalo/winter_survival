@@ -20,16 +20,16 @@ local M = {
 }
 
 -- Rows of the current device tab: { id, slot, ctx, label_key }. Actions with named slots on that device
--- (move_dir on keyboard: up/left/down/right) get one row per slot; move_dir has no button rows on mouse / pad
--- (LS is the whole-axis pad entry, right-click is `move_to`).
+-- (move_dir / camera_pan on keyboard: up/left/down/right) get one row per slot; whole-stick slots ("ls" / "rs")
+-- have no row. dev.* and the reserved G actions are not rebindable and get no row (so no edit buttons either).
 local function rebuild_rows()
   M.rows = {}
   local dev = M.devices[M.device_idx]
   for _, a in ipairs(input.ACTIONS) do
-    if a.rebindable then
+    if a.rebindable and not a.id:find("^dev%.") then
       if a.named_slots then
-        if dev == "keyboard" then
-          for _, slot in ipairs(input.slot_ids(a.id, dev)) do
+        for _, slot in ipairs(input.slot_ids(a.id, dev)) do
+          if slot ~= "ls" and slot ~= "rs" then
             M.rows[#M.rows + 1] = { id = a.id, slot = slot, ctx = a.ctx, label_key = input.label_key(a.id, slot), named = true }
           end
         end
@@ -231,8 +231,15 @@ function M.draw(area)
       M.selected_idx = idx
     end
 
-    local b1 = input.format_binding(dev, input.get_binding(dev, a.id, a.slot))
-    local b2 = a.named and "—" or input.format_binding(dev, input.get_binding(dev, a.id, 2))
+    local act = input.get_action(a.id)
+    local function shown(slot)
+      local b = input.get_binding(dev, a.id, slot)
+      local text = input.format_binding(dev, b)
+      if b and act.hold and act.hold[dev] then text = i18n.t("rebind.hold", { key = text }) end
+      return text
+    end
+    local b1 = shown(a.slot)
+    local b2 = a.named and "—" or shown(2)
     local ty = ry + math.floor((row_h - lh) * 0.5)
     widgets.label(f, widgets.ellipsize(f, i18n.t(a.label_key), 210), area.x + 12, ty, 210, theme.colors.text, 0)
     widgets.label(fs, i18n.t("ctx." .. a.ctx), area.x + 240, ty, 70, theme.colors.text_dim, 1)
