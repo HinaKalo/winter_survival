@@ -10,6 +10,7 @@ local settings = require("ui.settings")
 local title = require("scenes.title")
 
 local autoquit_after = tonumber(os.getenv("ISO_AUTOQUIT") or "")
+-- WS_SCENE remains the legacy scene selection alias through M4.
 local start_scene = os.getenv("WS_SCENE") or "title"
 local elapsed = 0
 
