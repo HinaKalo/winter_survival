@@ -76,7 +76,7 @@ class CollectOutputs(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "fake zig is a shell script")
 class MainCollects(unittest.TestCase):
-    def _run(self, rc):
+    def _run(self, rc, probes="tests/probe/a.lua"):
         with tempfile.TemporaryDirectory() as d:
             p = _project(d)
             zig = _fake_zig(d, rc)
@@ -84,7 +84,7 @@ class MainCollects(unittest.TestCase):
             os.chdir(p)
             try:
                 ret = VS.main(["--zig", zig, "--log-dir", "reports/windows", "--profile", "full",
-                               "--probes", "tests/probe/a.lua"])
+                               "--probes", probes])
             finally:
                 os.chdir(old)
             files = sorted(str(f.relative_to(p / "reports" / "windows")).replace(os.sep, "/")
@@ -101,6 +101,14 @@ class MainCollects(unittest.TestCase):
         ret, files = self._run(1)
         self.assertEqual(ret, 1)
         self.assertEqual(files, EXPECTED)
+
+    def test_main_collects_on_probe_selection_error(self):
+        ret, files = self._run(0, probes="tests/probe/none_*.lua")
+        self.assertEqual(ret, 1)
+        self.assertEqual(files, EXPECTED)
+
+    # Preflight errors (zig missing, no build.zig) return 2 before any step runs: nothing can have been
+    # produced, so nothing is collected (main-agent ruling on Codex Q13 review, P0-PLAN §9.3).
 
 
 if __name__ == "__main__":
