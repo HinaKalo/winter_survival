@@ -515,6 +515,15 @@ function M:on_enter(args)
   elseif dev_shot == "menu" then
     open_menu()
   end
+  -- dev / screenshot hooks (M5-3D): WS_HOME_SPLIT=1 sends the 2nd / 3rd character to B1 / 2F rooms;
+  -- WS_HOME_FLOOR = B1 | F1 | F2 picks the viewed floor.
+  if os.getenv("WS_HOME_SPLIT") == "1" then
+    local order = M.session.state.party.order
+    if order[2] then hs.act(M.session, order[2], "move:shelter") end
+    if order[3] then hs.act(M.session, order[3], "move:attic_bed") end
+  end
+  local f = os.getenv("WS_HOME_FLOOR")
+  if f == "B1" or f == "F1" or f == "F2" then set_view(f) end
 end
 
 function M:on_exit()
