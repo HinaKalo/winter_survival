@@ -147,7 +147,9 @@ pub const LightMap = struct {
                 l.dirty = false;
                 continue;
             }
-            if (!std.math.isFinite(l.x) or !std.math.isFinite(l.z) or !std.math.isFinite(l.radius) or l.radius <= 0) {
+            if (!std.math.isFinite(l.x) or !std.math.isFinite(l.z) or !std.math.isFinite(l.radius) or l.radius <= 0 or
+                @abs(l.x) > 1e6 or @abs(l.z) > 1e6)
+            {
                 l.dirty = false;
                 continue;
             }
@@ -283,4 +285,159 @@ test "lightmap occlusion, fog states, and cache hit" {
     try testing.expectEqual(@as(f32, 0.0), lm.sample(0, 0)[0]);
     // 再次更新无变化返回 0
     try testing.expectEqual(@as(u32, 0), lm.update(&m, &masks));
+}
+
+test "no lights leaves only ambient" {
+    var m = try TileMap.init(testing.allocator, 12, 12);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    const wall = try m.defineTile(.{ .top = 2, .side = 2, .solid = true, .@"opaque" = true });
+    m.fill(floor, 0);
+    m.set(3, 3, wall, 4);
+
+    var lm = try LightMap.init(testing.allocator, 12, 12);
+    defer lm.deinit();
+    lm.setAmbient(0.2, 0.3, 0.4);
+    var masks = try MaskSet.init(testing.allocator, 12, 12);
+    defer masks.deinit();
+
+    _ = lm.update(&m, &masks);
+    // 无可见性掩码时 lit 应与 ambient 完全一致
+    for (lm.lit) |c| try testing.expectEqualSlices(u8, &lm.ambient, &c);
+    for (lm.rgb) |c| try testing.expectEqualSlices(u8, &lm.ambient, &c);
+
+    const s = lm.sample(5, 5);
+    try testing.expectApproxEqAbs(@as(f32, 0.2), s[0], 1.0 / 255.0);
+    try testing.expectApproxEqAbs(@as(f32, 0.3), s[1], 1.0 / 255.0);
+    try testing.expectApproxEqAbs(@as(f32, 0.4), s[2], 1.0 / 255.0);
+    try testing.expectApproxEqAbs(@as(f32, 0.4), lm.level(5, 5), 1.0 / 255.0);
+
+    // 禁用的光源也不产生光照
+    lm.setAmbient(0, 0, 0);
+    const id = lm.add(.{ .x = 5.5, .z = 5.5, .radius = 4, .enabled = false });
+    try testing.expect(id != 0);
+    _ = lm.update(&m, &masks);
+    try testing.expectEqual(@as(f32, 0), lm.level(5, 5));
+}
+
+test "moving a light updates affected cells and clears old ones" {
+    var m = try TileMap.init(testing.allocator, 24, 24);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    m.fill(floor, 0);
+
+    var lm = try LightMap.init(testing.allocator, 24, 24);
+    defer lm.deinit();
+    lm.setAmbient(0, 0, 0);
+    var masks = try MaskSet.init(testing.allocator, 24, 24);
+    defer masks.deinit();
+
+    const id = lm.add(.{ .x = 4.5, .z = 4.5, .radius = 3, .color = .{ 1, 1, 1 } });
+    try testing.expect(id != 0);
+    _ = lm.update(&m, &masks);
+    try testing.expect(lm.level(4, 4) > 0.5);
+    try testing.expectEqual(@as(f32, 0), lm.level(20, 20));
+    try testing.expect(!lm.get(id).?.dirty);
+
+    // 移动光源到另一角
+    const before = try testing.allocator.dupe([3]u8, lm.rgb);
+    defer testing.allocator.free(before);
+    const l = lm.get(id).?;
+    l.x = 19.5;
+    l.z = 19.5;
+    l.dirty = true;
+
+    const changed = lm.update(&m, &masks);
+    try testing.expect(changed > 0);
+    try testing.expect(changed < 24 * 24);
+
+    // 返回值 == 实际变化格数
+    var diff: u32 = 0;
+    for (before, lm.rgb) |a, b| {
+        if (!std.mem.eql(u8, &a, &b)) diff += 1;
+    }
+    try testing.expectEqual(diff, changed);
+
+    // 旧位置被清空，新位置被照亮
+    try testing.expectEqual(@as(f32, 0), lm.level(4, 4));
+    try testing.expect(lm.level(19, 19) > 0.5);
+    try testing.expect(!lm.get(id).?.dirty);
+
+    // 无变化再次更新返回 0
+    try testing.expectEqual(@as(u32, 0), lm.update(&m, &masks));
+}
+
+test "flipping a cell opaque and back changes lit result after update" {
+    var m = try TileMap.init(testing.allocator, 12, 12);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    m.fill(floor, 0);
+
+    var lm = try LightMap.init(testing.allocator, 12, 12);
+    defer lm.deinit();
+    lm.setAmbient(0, 0, 0);
+    var masks = try MaskSet.init(testing.allocator, 12, 12);
+    defer masks.deinit();
+    _ = lm.add(.{ .x = 2.5, .z = 5.5, .radius = 8 });
+
+    _ = lm.update(&m, &masks);
+    try testing.expect(lm.level(6, 5) > 0.1);
+
+    // 中间格变不透明：后方被遮挡
+    m.setFlag(4, 5, tilemap.Flag.@"opaque", true);
+    try testing.expect(lm.update(&m, &masks) > 0);
+    try testing.expectEqual(@as(f32, 0), lm.level(6, 5));
+    // 墙格本身作为终点仍被照亮
+    try testing.expect(lm.level(4, 5) > 0.1);
+
+    // 恢复透明：后方重新被照亮
+    m.setFlag(4, 5, tilemap.Flag.@"opaque", false);
+    try testing.expect(lm.update(&m, &masks) > 0);
+    try testing.expect(lm.level(6, 5) > 0.1);
+    try testing.expectEqual(@as(u32, 0), lm.update(&m, &masks));
+}
+
+test "65th light is rejected and first 64 stay intact" {
+    try testing.expectEqual(@as(usize, 64), max_lights);
+    var m = try TileMap.init(testing.allocator, 40, 40);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    m.fill(floor, 0);
+
+    var lm = try LightMap.init(testing.allocator, 40, 40);
+    defer lm.deinit();
+    lm.setAmbient(0, 0, 0);
+    var masks = try MaskSet.init(testing.allocator, 40, 40);
+    defer masks.deinit();
+
+    // 8×8 网格布置 64 盏光源，半径 2，彼此不重叠
+    var i: u32 = 0;
+    while (i < max_lights) : (i += 1) {
+        const x: f32 = @as(f32, @floatFromInt(i % 8)) * 4.0 + 2.5;
+        const z: f32 = @as(f32, @floatFromInt(i / 8)) * 4.0 + 2.5;
+        const id = lm.add(.{ .x = x, .z = z, .radius = 2, .color = .{ 1, 1, 1 } });
+        try testing.expectEqual(i + 1, id);
+    }
+    _ = lm.update(&m, &masks);
+    try testing.expect(lm.level(2, 2) > 0.9);
+    try testing.expect(lm.level(30, 30) > 0.9);
+    try testing.expectEqual(@as(f32, 0), lm.level(4, 4));
+
+    const snapshot = try testing.allocator.dupe([3]u8, lm.lit);
+    defer testing.allocator.free(snapshot);
+
+    // 第 65 盏被拒绝
+    try testing.expectEqual(@as(u32, 0), lm.add(.{ .x = 4.5, .z = 4.5, .radius = 2, .color = .{ 1, 0, 0 } }));
+    try testing.expectEqual(@as(u32, 0), lm.update(&m, &masks));
+    try testing.expectEqualSlices([3]u8, snapshot, lm.lit);
+    try testing.expectEqual(@as(f32, 0), lm.level(4, 4));
+
+    // 前 64 盏数据未被破坏
+    var id: u32 = 1;
+    while (id <= max_lights) : (id += 1) {
+        const l = lm.get(id) orelse return error.TestUnexpectedResult;
+        try testing.expect(l.used);
+        try testing.expectEqual(@as(f32, 2.5 + @as(f32, @floatFromInt((id - 1) % 8)) * 4.0), l.x);
+    }
+    try testing.expect(lm.get(max_lights + 1) == null);
 }

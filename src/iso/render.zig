@@ -1,5 +1,6 @@
 //! 图形层：分块瓦片网格、覆盖层、精灵表、世界渲染器。
 const std = @import("std");
+const builtin = @import("builtin");
 const delve = @import("delve");
 const math = delve.math;
 const colors = delve.colors;
@@ -99,11 +100,37 @@ const ChunkBatch = struct {
     quads: u32 = 0,
 };
 
+/// 把一个 3D 四边形（4 顶点，已含各自颜色）追加到分块批次，走 Batcher 的 vertex_pos / index_pos 记账，
+/// 与 `Batcher.addQuad` 的约定一致（+4 顶点、+6 索引；启动自检 selfCheckBatcher 校验该约定）。
+/// Batcher 公开 API 只有 2D addQuad（单色、z=0），无法表达每顶点光照色的立体面，故在此补一个。
+fn pushQuad3d(b: *batcher.Batcher, verts: [4]graphics.PackedVertex) void {
+    if (b.vertex_pos + 4 > b.vertex_buffer.len or b.index_pos + 6 > b.index_buffer.len) return;
+    const base: u32 = @intCast(b.vertex_pos);
+    for (verts, 0..) |v, i| b.vertex_buffer[b.vertex_pos + i] = v;
+    const idx = [6]u32{ 0, 1, 2, 0, 2, 3 };
+    for (idx, 0..) |k, i| b.index_buffer[b.index_pos + i] = base + k;
+    b.vertex_pos += 4;
+    b.index_pos += 6;
+}
+
+/// ENGINE-PLAN A7.1 启动自检：一次 addRectangle 之后 vertex_pos 必须 +4、index_pos 必须 +6，
+/// 否则 Batcher 的记账约定与本模块假设不符（升级 Delve 后可能发生）。
+fn selfCheckBatcher() !void {
+    var b = try batcher.Batcher.init(.{ .min_vertices = 16, .min_indices = 24 });
+    defer b.deinit();
+    const v0 = b.vertex_pos;
+    const idx0 = b.index_pos;
+    b.addRectangle(Rect.new(Vec2.zero, Vec2.new(1, 1)), TextureRegion.default(), colors.white);
+    if (b.vertex_pos != v0 + 4 or b.index_pos != idx0 + 6) {
+        debug.fatal("iso: Batcher self-check failed: addRectangle advanced vertex_pos by {d} (want 4), index_pos by {d} (want 6)", .{ b.vertex_pos - v0, b.index_pos - idx0 });
+        return error.BatcherSelfCheckFailed;
+    }
+}
+
 pub const WorldRenderer = struct {
     allocator: Allocator,
     sprite_batch: batcher.SpriteBatcher,
     ov_batch: batcher.SpriteBatcher,
-    hl_batch: batcher.SpriteBatcher,
     chunks: std.ArrayList(ChunkBatch) = .empty,
     chunk_quad_scratch: std.ArrayList(tilemesh.Quad) = .empty,
     atlas: ?TileAtlas = null,
@@ -112,13 +139,14 @@ pub const WorldRenderer = struct {
     ov_materials: std.AutoHashMap(u32, graphics.Material),
     alpha_masks: std.AutoHashMap(u32, AlphaMask),
     hl_material: graphics.Material,
-    highlight: ?GridPos = null,
-    highlight_color: Color = colors.white,
+    /// 世界染色：绘制时写入材质的 draw_color（shader 里与顶点色相乘），不烘进顶点
     tint: Color = colors.white,
+    /// 调试构建：每个缓冲每帧最多 apply 一次（key = 缓冲地址，value = 最后一次 apply 的帧号）
+    frame: u64 = 0,
+    apply_frames: std.AutoHashMap(usize, u64),
     texture_cache: std.StringHashMap(u32),
     tile_quads: u32 = 0,
     sprite_quads: u32 = 0,
-    hl_quads: u32 = 0,
     chunks_rebuilt_last: u32 = 0,
     chunks_drawn_last: u32 = 0,
     warned_tiles: bool = false,
@@ -129,8 +157,7 @@ pub const WorldRenderer = struct {
         errdefer sprite_batch.deinit();
         var ov_batch = try batcher.SpriteBatcher.init(.{});
         errdefer ov_batch.deinit();
-        var hl_batch = try batcher.SpriteBatcher.init(.{});
-        errdefer hl_batch.deinit();
+        try selfCheckBatcher();
 
         const hl_material = try graphics.Material.init(.{
             .texture_0 = graphics.tex_white,
@@ -144,11 +171,11 @@ pub const WorldRenderer = struct {
             .allocator = allocator,
             .sprite_batch = sprite_batch,
             .ov_batch = ov_batch,
-            .hl_batch = hl_batch,
             .materials = std.AutoHashMap(u32, graphics.Material).init(allocator),
             .ov_materials = std.AutoHashMap(u32, graphics.Material).init(allocator),
             .alpha_masks = std.AutoHashMap(u32, AlphaMask).init(allocator),
             .hl_material = hl_material,
+            .apply_frames = std.AutoHashMap(usize, u64).init(allocator),
             .texture_cache = std.StringHashMap(u32).init(allocator),
         };
     }
@@ -159,7 +186,7 @@ pub const WorldRenderer = struct {
         self.chunk_quad_scratch.deinit(self.allocator);
         self.sprite_batch.deinit();
         self.ov_batch.deinit();
-        self.hl_batch.deinit();
+        self.apply_frames.deinit();
         var it = self.materials.valueIterator();
         while (it.next()) |m| m.deinit();
         self.materials.deinit();
@@ -187,7 +214,6 @@ pub const WorldRenderer = struct {
     pub fn resetResources(self: *WorldRenderer) void {
         self.atlas = null;
         self.sheets.clearRetainingCapacity();
-        self.highlight = null;
         self.tint = colors.white;
         self.dropChunks();
     }
@@ -295,12 +321,35 @@ pub const WorldRenderer = struct {
         return @intCast(self.sheets.items.len);
     }
 
-    pub fn setHighlight(self: *WorldRenderer, tile: ?GridPos, color: Color) void {
-        self.highlight = tile;
-        self.highlight_color = color;
+    /// 调试构建断言：同一缓冲一帧内只能 apply 一次（sokol 的 update_buffer 每帧每缓冲限一次）。
+    fn noteApply(self: *WorldRenderer, key: usize) void {
+        if (builtin.mode != .Debug) return;
+        const gop = self.apply_frames.getOrPut(key) catch return;
+        if (gop.found_existing and gop.value_ptr.* == self.frame) {
+            debug.fatal("iso: buffer {x} applied twice in frame {d}", .{ key, self.frame });
+            return;
+        }
+        gop.value_ptr.* = self.frame;
+    }
+
+    fn applyBatcher(self: *WorldRenderer, b: *batcher.Batcher) void {
+        self.noteApply(@intFromPtr(b));
+        b.apply();
+    }
+
+    fn applySprites(self: *WorldRenderer, sb: *batcher.SpriteBatcher) void {
+        self.noteApply(@intFromPtr(sb));
+        sb.apply();
+    }
+
+    /// 把当前世界染色写入所有世界材质（材质 state 是共享指针，分块与精灵批次同时生效）。
+    fn applyTint(self: *WorldRenderer) void {
+        var it = self.materials.valueIterator();
+        while (it.next()) |m| m.state.params.draw_color = self.tint;
     }
 
     pub fn draw(self: *WorldRenderer, map: *TileMap, world: *World, cam: *IsoCamera, lm: *const LightMap, ov: *Overlays) void {
+        self.frame +%= 1;
         self.chunks_rebuilt_last = 0;
         self.chunks_drawn_last = 0;
         if (self.atlas != null) {
@@ -309,7 +358,7 @@ pub const WorldRenderer = struct {
         }
         self.rebuildOverlays(map, ov);
         self.rebuildSprites(world, cam);
-        self.rebuildHighlight(map);
+        self.applyTint();
 
         const mats = graphics.CameraMatrices{
             .view = cam.view,
@@ -325,7 +374,6 @@ pub const WorldRenderer = struct {
         }
         self.ov_batch.draw(mats, Mat4.identity);
         self.sprite_batch.draw(mats, Mat4.identity);
-        self.hl_batch.draw(mats, Mat4.identity);
     }
 
     fn ensureChunks(self: *WorldRenderer, map: *TileMap, lm: *const LightMap) void {
@@ -339,7 +387,6 @@ pub const WorldRenderer = struct {
             map.markAllDirty();
         }
 
-        const tint_a = self.tint.toArray();
         var cy: u32 = 0;
         while (cy < map.chunks_h) : (cy += 1) {
             var cx: u32 = 0;
@@ -374,7 +421,7 @@ pub const WorldRenderer = struct {
                     }
                     if (chunk.batch) |*b| {
                         b.reset();
-                        for (self.chunk_quad_scratch.items[0..n_quads], 0..) |q, qi| {
+                        for (self.chunk_quad_scratch.items[0..n_quads]) |q| {
                             const reg = atlas.region(q.atlas);
                             const v0 = reg.v + (reg.v_2 - reg.v) * q.v_top;
                             const v1 = reg.v + (reg.v_2 - reg.v) * q.v_bot;
@@ -384,39 +431,30 @@ pub const WorldRenderer = struct {
                                 .{ reg.u_2, v0 },
                                 .{ reg.u, v0 },
                             };
-                            const v_base = qi * 4;
+                            var verts: [4]graphics.PackedVertex = undefined;
                             for (0..4) |vi| {
-                                const col = [4]f32{
-                                    (@as(f32, @floatFromInt(q.c[vi][0])) / 255.0) * tint_a[0],
-                                    (@as(f32, @floatFromInt(q.c[vi][1])) / 255.0) * tint_a[1],
-                                    (@as(f32, @floatFromInt(q.c[vi][2])) / 255.0) * tint_a[2],
-                                    tint_a[3],
-                                };
-                                b.vertex_buffer[v_base + vi] = .{
+                                verts[vi] = .{
                                     .x = q.p[vi][0],
                                     .y = q.p[vi][1],
                                     .z = q.p[vi][2],
-                                    .color = col,
+                                    // 世界染色不在这里乘：绘制时走材质 draw_color
+                                    .color = .{
+                                        @as(f32, @floatFromInt(q.c[vi][0])) / 255.0,
+                                        @as(f32, @floatFromInt(q.c[vi][1])) / 255.0,
+                                        @as(f32, @floatFromInt(q.c[vi][2])) / 255.0,
+                                        1.0,
+                                    },
                                     .u = uvs[vi][0],
                                     .v = uvs[vi][1],
                                 };
                             }
-                            const i_base = qi * 6;
-                            const vb: u32 = @intCast(v_base);
-                            b.index_buffer[i_base + 0] = vb + 0;
-                            b.index_buffer[i_base + 1] = vb + 1;
-                            b.index_buffer[i_base + 2] = vb + 2;
-                            b.index_buffer[i_base + 3] = vb + 0;
-                            b.index_buffer[i_base + 4] = vb + 2;
-                            b.index_buffer[i_base + 5] = vb + 3;
+                            pushQuad3d(b, verts);
                         }
-                        b.vertex_pos = need_v;
-                        b.index_pos = need_i;
-                        b.apply();
+                        self.applyBatcher(b);
                     }
                 } else if (chunk.batch) |*b| {
                     b.reset();
-                    b.apply();
+                    self.applyBatcher(b);
                 }
 
                 map.chunk_dirty[ci] = false;
@@ -457,7 +495,7 @@ pub const WorldRenderer = struct {
                 quads += 1;
             }
         }
-        b.apply();
+        self.applySprites(b);
     }
 
     fn rebuildSprites(self: *WorldRenderer, world: *World, cam: *const IsoCamera) void {
@@ -469,7 +507,6 @@ pub const WorldRenderer = struct {
         const vscale = 1.0 / @cos(pitch_rad);
         const rot = camera_mod.billboardRotation(cam.yaw);
         const sc = Mat4.scale(Vec3.new(1, vscale, 1));
-        const tint_a = self.tint.toArray();
 
         var it = world.iterator();
         while (it.next()) |e| {
@@ -485,41 +522,16 @@ pub const WorldRenderer = struct {
             const sheet = self.sheets.items[e.sheet - 1];
             const mat = self.materialFor(sheet.texture_handle) orelse continue;
             b.useMaterial(mat);
-            b.setTransformMatrix(Mat4.translate(e.pos).mul(rot).mul(sc));
+            // 脚底锚点吸附到整像素（与相机吸附同一取整规则），避免精灵在屏幕上抖动
+            const foot = if (cam.snap_pixels) cam.snapToPixel(e.pos) else e.pos;
+            b.setTransformMatrix(Mat4.translate(foot).mul(rot).mul(sc));
             const rect = Rect.new(Vec2.new(-e.size.x * 0.5, 0), e.size);
             const et = e.tint.toArray();
             const l = if (e.lit) e.light else [3]f32{ 1, 1, 1 };
-            const col = Color.new(
-                et[0] * l[0] * tint_a[0],
-                et[1] * l[1] * tint_a[1],
-                et[2] * l[2] * tint_a[2],
-                et[3] * tint_a[3],
-            );
+            const col = Color.new(et[0] * l[0], et[1] * l[1], et[2] * l[2], et[3]);
             self.sprite_quads += 1;
             b.addRectangle(rect, sheet.region(e.frame, e.flip_x), col);
         }
-        b.apply();
-    }
-
-    fn rebuildHighlight(self: *WorldRenderer, map: *const TileMap) void {
-        const b = &self.hl_batch;
-        b.reset();
-        self.hl_quads = 0;
-        if (self.highlight) |t| {
-            if (map.get(t.x, t.y)) |tile| {
-                if (tile.kind != 0) {
-                    b.useMaterial(self.hl_material);
-                    const fx: f32 = @floatFromInt(t.x);
-                    const fz: f32 = @floatFromInt(t.y);
-                    const m = Mat4.translate(Vec3.new(fx, map.topY(t.x, t.y) + 0.012, fz + 1)).mul(Mat4.rotate(-90, Vec3.x_axis));
-                    b.setTransformMatrix(m);
-                    if (self.hl_quads < max_quads_per_batch) {
-                        self.hl_quads += 1;
-                        b.addRectangle(Rect.new(Vec2.zero, Vec2.new(1, 1)), TextureRegion.default(), self.highlight_color);
-                    }
-                }
-            }
-        }
-        b.apply();
+        self.applySprites(b);
     }
 };

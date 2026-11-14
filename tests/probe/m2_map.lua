@@ -1,15 +1,52 @@
--- X18 probe: verifies M2 G2 (64x64 chunk rebuild <= 4, no quad overflow) & G4 (exterior/cutaway + door toggle).
+-- X18 probe: verifies M2 G2 (64x64 chunk rebuild <= 4, no quad overflow), G4 (exterior/cutaway + door toggle)
+-- and the G5 orientation of view/facing.lua against the live camera projection.
 local probe = require("kit_probe")
 local street_block = require("data.locations.street_block")
 local suburb_house = require("data.locations.suburb_house")
 local mapbuild = require("view.mapbuild")
+local facing = require("view.facing")
 
 probe.timeout(30)
+
+-- render.zig `max_quads_per_batch`: a chunk whose quads exceed it is truncated (and the engine logs
+-- "iso: chunk quad budget (...) exceeded" once to stderr). Chunk quads are clamped to the budget before
+-- they are summed into render_stats()[1], so a total below the budget proves no chunk was truncated.
+-- Lua cannot read the process log; ci/probe_junit.py fails the run if that warning appears in the log.
+local QUAD_BUDGET = 10000
 
 local function wait_frames(n)
 	for _ = 1, (n or 1) do
 		coroutine.yield()
 	end
+end
+
+-- Waits until the renderer has rebuilt the map, then checks the quad total for this mode.
+local function check_no_quad_overflow(label)
+	wait_frames(2)
+	local s = iso.render_stats()
+	probe.info(string.format("%s: tile_quads=%d chunks_rebuilt_last=%d chunks_drawn_last=%d budget=%d",
+		label, s[1], s[2], s[3], QUAD_BUDGET))
+	probe.check(label .. ": tile_quads " .. s[1] .. " < budget " .. QUAD_BUDGET .. " (no quad truncation)", s[1] < QUAD_BUDGET)
+	return s
+end
+
+-- G5 (orientation): facing.pick must agree with the real screen projection of the live camera for the
+-- four axis moves (yaw 45: +X -> SE, +Z -> SW, -X -> NW, -Z -> NE). Screen right = x, screen down = y.
+local function check_facing_vs_camera()
+	local o = iso.world_to_screen(32, 0, 32)
+	local cases = { { 1, 0, facing.SE }, { 0, 1, facing.SW }, { -1, 0, facing.NW }, { 0, -1, facing.NE } }
+	local all = true
+	for _, c in ipairs(cases) do
+		local dx, dz, f = c[1], c[2], c[3]
+		local p = iso.world_to_screen(32 + 4 * dx, 0, 32 + 4 * dz)
+		local sx, sy = p[1] - o[1], p[2] - o[2]
+		local right = (f == facing.SE or f == facing.NE)
+		local down = (f == facing.SE or f == facing.SW)
+		local ok = (sx > 0) == right and (sy > 0) == down and facing.pick(nil, dx, dz) == f
+		all = all and ok
+		probe.info(string.format("G5 move (%d,%d): screen delta (%.1f, %.1f) facing %d", dx, dz, sx, sy, f))
+	end
+	probe.check("G5: facing.pick matches the live camera projection for the 4 axis moves", all)
 end
 
 local function scenario()
@@ -25,6 +62,8 @@ local function scenario()
 	local s0 = iso.render_stats()
 	probe.check("G2: 64x64 tile_quads > 0", s0[1] > 0)
 	probe.check("G2: chunks_drawn_last > 0", s0[3] > 0)
+	check_no_quad_overflow("G2 exterior")
+	check_facing_vs_camera()
 
 	-- Modify 1 cell -> chunks_rebuilt_last <= 4
 	local tid_snow = state_ext.tile_ids.snow or 0
@@ -41,6 +80,7 @@ local function scenario()
 	local plan_cut = mapbuild.plan(street_block, { mode = "cutaway" })
 	local state_cut = mapbuild.apply(plan_cut)
 	wait_frames(1)
+	check_no_quad_overflow("G2 cutaway")
 
 	-- Find a closed door with clear tiles on opposite sides (along X or Y)
 	local test_door, ax, ay, bx, by = nil, 0, 0, 0, 0

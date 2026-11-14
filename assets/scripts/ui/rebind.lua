@@ -16,15 +16,29 @@ local M = {
   flash_action = nil,
   flash_t = 0,
   rows = {},
+  _rows_dev = nil,
 }
 
+-- Rows of the current device tab: { id, slot, ctx, label_key }. Actions with named slots on that device
+-- (move_dir on keyboard: up/left/down/right) get one row per slot; move_dir has no button rows on mouse / pad
+-- (LS is the whole-axis pad entry, right-click is `move_to`).
 local function rebuild_rows()
   M.rows = {}
+  local dev = M.devices[M.device_idx]
   for _, a in ipairs(input.ACTIONS) do
     if a.rebindable then
-      M.rows[#M.rows + 1] = a
+      if a.named_slots then
+        if dev == "keyboard" then
+          for _, slot in ipairs(input.slot_ids(a.id, dev)) do
+            M.rows[#M.rows + 1] = { id = a.id, slot = slot, ctx = a.ctx, label_key = input.label_key(a.id, slot), named = true }
+          end
+        end
+      else
+        M.rows[#M.rows + 1] = { id = a.id, slot = 1, ctx = a.ctx, label_key = input.label_key(a.id) }
+      end
     end
   end
+  M._rows_dev = dev
   if M.selected_idx > #M.rows then M.selected_idx = 1 end
 end
 
@@ -38,6 +52,7 @@ local function start_capture(action_id, slot)
   M.capture = {
     action_id = action_id,
     slot = slot or 1,
+    label_key = input.label_key(action_id, slot),
     timer = 5.0,
     ignore_first = true,
   }
@@ -61,6 +76,7 @@ local function try_commit_binding(dev, action_id, slot, binding)
       binding = binding,
       other_id = conf.action_id,
       other_slot = conf.slot,
+      other_label_key = input.label_key(conf.action_id, conf.slot),
     }
     return
   end
@@ -137,7 +153,7 @@ function M.update(dt)
 end
 
 function M.draw(area)
-  if #M.rows == 0 then rebuild_rows() end
+  if #M.rows == 0 or M._rows_dev ~= M.devices[M.device_idx] then rebuild_rows() end
   local dev = M.devices[M.device_idx]
   local f = theme.font("b")
   local fs = theme.font("s")
@@ -193,7 +209,7 @@ function M.draw(area)
       sub_group = "content",
       on_click = function()
         if M.selected_idx == idx then
-          start_capture(a.id, 1)
+          start_capture(a.id, a.slot)
         else
           M.selected_idx = idx
         end
@@ -205,10 +221,10 @@ function M.draw(area)
       M.selected_idx = idx
     end
 
-    local b1 = input.format_binding(dev, input.get_binding(dev, a.id, 1))
-    local b2 = input.format_binding(dev, input.get_binding(dev, a.id, 2))
+    local b1 = input.format_binding(dev, input.get_binding(dev, a.id, a.slot))
+    local b2 = a.named and "—" or input.format_binding(dev, input.get_binding(dev, a.id, 2))
     local ty = ry + math.floor((row_h - lh) * 0.5)
-    widgets.label(f, widgets.ellipsize(f, i18n.t("act." .. a.id), 210), area.x + 12, ty, 210, theme.colors.text, 0)
+    widgets.label(f, widgets.ellipsize(f, i18n.t(a.label_key), 210), area.x + 12, ty, 210, theme.colors.text, 0)
     widgets.label(fs, i18n.t("ctx." .. a.ctx), area.x + 240, ty, 70, theme.colors.text_dim, 1)
     widgets.label(f, b1, area.x + 320, ty, 140, theme.colors.accent, 1)
     widgets.label(f, b2, area.x + 470, ty, 140, theme.colors.text_dim, 1)
@@ -231,12 +247,12 @@ function M.draw(area)
     widgets.button("rb_bind", { x = area.x, y = by, w = 130, h = 40 }, i18n.t("rebind.btn_bind"), {
       variant = "primary",
       sub_group = "rebind_actions",
-      on_click = function() start_capture(sel.id, 1) end,
+      on_click = function() start_capture(sel.id, sel.slot) end,
     })
     widgets.button("rb_clear", { x = area.x + 140, y = by, w = 130, h = 40 }, i18n.t("rebind.btn_clear"), {
       sub_group = "rebind_actions",
       on_click = function()
-        local ok, err = input.set_binding(dev, sel.id, 1, nil)
+        local ok, err = input.set_binding(dev, sel.id, sel.slot, nil)
         if not ok then
           widgets.show_toast(i18n.t(err == "no_entry" and "rebind.err_no_entry" or "rebind.err_reserved"))
         end
@@ -257,7 +273,7 @@ function M.draw(area)
     local mx, my = math.floor((sw - mw) * 0.5), math.floor((sh - mh) * 0.5)
     widgets.panel(mx, my, mw, mh, 0.98)
     local msg = i18n.t("rebind.prompt", {
-      action = i18n.t("act." .. cap.action_id),
+      action = i18n.t(cap.label_key),
       sec = string.format("%.1f", math.max(0, cap.timer)),
     })
     widgets.label(f, msg, mx + 24, my + 32, mw - 48, theme.colors.text, 1)
@@ -287,7 +303,7 @@ function M.draw(area)
     local mx, my = math.floor((sw - mw) * 0.5), math.floor((sh - mh) * 0.5)
     widgets.panel(mx, my, mw, mh, 0.98)
     widgets.label(theme.font("t"), i18n.t("rebind.conflict_title"), mx + 24, my + 20, mw - 48, theme.colors.accent, 0)
-    widgets.label(f, i18n.t("rebind.conflict_msg", { other = i18n.t("act." .. c.other_id) }),
+    widgets.label(f, i18n.t("rebind.conflict_msg", { other = i18n.t(c.other_label_key) }),
       mx + 24, my + 68, mw - 48, theme.colors.text, 0)
 
     widgets.button("rb_conf_cancel", { x = mx + 24, y = my + 140, w = 130, h = 40 }, i18n.t("ui.cancel"), {

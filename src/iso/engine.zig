@@ -42,6 +42,7 @@ pub var renderer: render.WorldRenderer = undefined;
 pub var follow_entity: u32 = 0;
 
 var initialized: bool = false;
+var last_dt: f32 = 0;
 
 pub fn register(cfg: Config) !void {
     config = cfg;
@@ -54,6 +55,12 @@ pub fn register(cfg: Config) !void {
         .cleanup_fn = onCleanup,
     });
     try script_host.register(cfg.main_script);
+    // 在 Lua update（script_host，-60）之后更新光照，Lua 本帧对光源/迷雾/不透明格的改动当帧生效
+    try modules.registerModule(.{
+        .name = "iso_world_post",
+        .priority = -50,
+        .tick_fn = onLateTick,
+    });
 }
 
 fn onInit() !void {
@@ -102,9 +109,8 @@ fn viewportH() f32 {
 
 fn onTick(raw_dt: f32) void {
     const dt = @min(raw_dt, config.max_dt);
+    last_dt = dt;
     world.tick(dt, &map, camera.yaw);
-    _ = lights.update(&map, &masks);
-    world.applyLight(&lights, &map, dt);
     if (follow_entity != 0) {
         if (world.get(follow_entity)) |e| {
             camera.follow_goal = e.pos;
@@ -117,13 +123,20 @@ fn onTick(raw_dt: f32) void {
     camera.update(viewportW(), viewportH());
 }
 
+/// Lua update 之后：光照缓存重算 + 实体受光插值。
+fn onLateTick(_: f32) void {
+    if (!initialized) return;
+    _ = lights.update(&map, &masks);
+    world.applyLight(&lights, &map, last_dt);
+}
+
 fn onDraw() void {
     camera.update(viewportW(), viewportH());
     renderer.draw(&map, &world, &camera, &lights, &overlays);
 }
 
 pub fn clearWorld() void {
-    world.clear();
+    world.clearScene(&lights, &overlays);
     follow_entity = 0;
     camera.follow_goal = null;
 }

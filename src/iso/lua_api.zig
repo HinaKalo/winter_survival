@@ -20,6 +20,7 @@ const tilemap = @import("tilemap.zig");
 const vision = @import("vision.zig");
 const world_mod = @import("world.zig");
 const coords = @import("coords.zig");
+const overlay_mod = @import("overlay.zig");
 
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
@@ -89,8 +90,8 @@ var path_buf: [1024][2]i32 = undefined;
 // ------------------------------------------------------------------ 地图
 
 pub fn map_create(w: i64, h: i64) void {
-    const ww: u32 = @intCast(std.math.clamp(w, 1, 1024));
-    const hh: u32 = @intCast(std.math.clamp(h, 1, 1024));
+    const ww: u32 = @intCast(std.math.clamp(w, 1, 128));
+    const hh: u32 = @intCast(std.math.clamp(h, 1, 128));
     engine.resetMapSize(ww, hh) catch {};
 }
 
@@ -119,11 +120,18 @@ pub fn tile_define(top: i64, side: i64, solid: bool, liquid: bool) i64 {
 }
 
 pub fn tile_define_ex(top: i64, side: i64, side_cap: i64, solid: bool, liquid: bool, opaque_flag: bool, tag: i64) i64 {
+    return tile_define_ex2(top, side, side_cap, -1, solid, liquid, opaque_flag, tag);
+}
+
+/// 同 tile_define_ex，另带 `side_base`（最下一段侧面的图集格；< 0 = 同 side）。
+pub fn tile_define_ex2(top: i64, side: i64, side_cap: i64, side_base: i64, solid: bool, liquid: bool, opaque_flag: bool, tag: i64) i64 {
     const cap: u16 = if (side_cap < 0) 0xFFFF else clampU16(side_cap);
+    const base: u16 = if (side_base < 0) 0xFFFF else clampU16(side_base);
     const kind = engine.map.defineTile(.{
         .top = clampU16(top),
         .side = clampU16(side),
         .side_cap = cap,
+        .side_base = base,
         .solid = solid,
         .liquid = liquid,
         .@"opaque" = opaque_flag,
@@ -236,17 +244,7 @@ pub fn camera_follow(id: i64) void {
     engine.follow_entity = u;
 }
 
-pub fn camera_rotate(steps: i64) void {
-    engine.camera.rotateStep(@intCast(std.math.clamp(steps, -1000, 1000)));
-}
-
-pub fn camera_set_angles(yaw: f32, pitch: f32) void {
-    if (!fin(yaw) or !fin(pitch)) return;
-    engine.camera.yaw = yaw;
-    engine.camera.yaw_goal = yaw;
-    engine.camera.pitch = std.math.clamp(pitch, 5.0, 85.0);
-}
-
+/// 恒为 45（D6：相机朝向锁定，无旋转接口）。
 pub fn camera_get_yaw() f32 {
     return engine.camera.yaw;
 }
@@ -495,13 +493,17 @@ pub fn entity_last_move(id: i64) [2]f32 {
 
 // ------------------------------------------------------------------ 高亮
 
+/// 高亮格走覆盖层组 15（最后绘制，盖在其它覆盖层之上）。
 pub fn highlight_tile(x: i64, y: i64, r: f32, g: f32, b: f32, a: f32) void {
     if (!fin4(r, g, b, a)) return;
-    engine.renderer.setHighlight(.{ .x = i32Of(x), .y = i32Of(y) }, colorOf(r, g, b, a));
+    // 只对非空格子绘制：越界或 kind 0 时清掉高亮（cursor.lua 每帧对悬停格调用）
+    const t = engine.map.get(i32Of(x), i32Of(y)) orelse return engine.overlays.clear(overlay_mod.highlight_group);
+    if (t.kind == 0) return engine.overlays.clear(overlay_mod.highlight_group);
+    engine.overlays.setSingle(overlay_mod.highlight_group, i32Of(x), i32Of(y), colorBytes(r, g, b, a));
 }
 
 pub fn highlight_clear() void {
-    engine.renderer.setHighlight(null, colors.white);
+    engine.overlays.clear(overlay_mod.highlight_group);
 }
 
 // ------------------------------------------------------------------ 输入
@@ -714,8 +716,6 @@ pub fn world_set_tint(r: f32, g: f32, b: f32) void {
 
 pub fn world_clear() void {
     engine.clearWorld();
-    engine.overlays.clearAll();
-    engine.lights.clear();
     for (1..vision.max_masks + 1) |i| {
         if (engine.masks.get(@intCast(i))) |m| m.clear();
     }
@@ -739,7 +739,11 @@ pub fn overlay_add(g: i64, x: i64, y: i64, r: f32, g2: f32, b: f32, a: f32) void
 pub fn overlay_add_tex(g: i64, x: i64, y: i64, atlas: i64, r: f32, g2: f32, b: f32, a: f32) void {
     if (!fin4(r, g2, b, a)) return;
     const gi = idOf(g) orelse return;
-    engine.overlays.addTex(gi, i32Of(x), i32Of(y), clampU16(atlas), colorBytes(r, g2, b, a));
+    if (atlas < 0 or atlas >= overlay_mod.max_atlas_cells) {
+        engine.overlays.rejected_atlas +%= 1;
+        return;
+    }
+    engine.overlays.addTex(gi, i32Of(x), i32Of(y), @intCast(atlas), colorBytes(r, g2, b, a));
 }
 
 pub fn overlay_add_mask(g: i64, m: i64, r: f32, g2: f32, b: f32, a: f32) void {
@@ -764,5 +768,13 @@ pub fn render_stats() [3]i32 {
         @intCast(engine.renderer.tile_quads),
         @intCast(engine.renderer.chunks_rebuilt_last),
         @intCast(engine.renderer.chunks_drawn_last),
+    };
+}
+
+/// {overlay_cells, rejected_atlas_cells}：被 overlay_add_tex 因图集格越界而忽略的累计次数
+pub fn overlay_stats() [2]i32 {
+    return .{
+        @intCast(@min(engine.overlays.total, std.math.maxInt(i32))),
+        @intCast(@min(engine.overlays.rejected_atlas, std.math.maxInt(i32))),
     };
 }

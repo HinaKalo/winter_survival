@@ -781,7 +781,7 @@ def cmd_check(root: Path, junit) -> int:
 def main(argv=None, root: Path = ROOT) -> int:
     ap = argparse.ArgumentParser(prog="assets.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("placeholder", help="run tools/gen_assets.py")
+    sub.add_parser("placeholder", help="run tools/gen_m2_placeholders.py")
     au = sub.add_parser("audio").add_subparsers(dest="sub", required=True)
     b = au.add_parser("build")
     b.add_argument("--pixel-hero")
@@ -798,7 +798,7 @@ def main(argv=None, root: Path = ROOT) -> int:
     args = ap.parse_args(argv)
     try:
         if args.cmd == "placeholder":
-            return subprocess.call([sys.executable, "-I", str(root / "tools" / "gen_assets.py")])
+            return subprocess.call([sys.executable, "-I", str(root / "tools" / "gen_m2_placeholders.py")])
         if args.cmd == "audio" and args.sub == "build":
             return audio_build(root, args)
         if args.cmd == "audio" and args.sub == "sync":

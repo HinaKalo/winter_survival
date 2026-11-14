@@ -1,5 +1,6 @@
 -- Actor view helper: sheet loading, facing-aware animation, movement & flashlight.
 local facing = require("view.facing")
+local lightfov = require("view.lightfov")
 
 local M = {}
 
@@ -39,9 +40,8 @@ function M.spawn(opts)
 	apply_anim(actor, "idle", actor.facing, true)
 
 	if opts.flashlight ~= nil then
-		local lid = iso.light_add(x, z, opts.light_radius or 6.5, 1.0, 0.94, 0.80)
-		iso.light_set_enabled(lid, actor.flashlight_on)
-		actor.light_id = lid
+		-- Flashlight: "torch" from the ART-AUDIO §3.3 light table (data/lights.lua).
+		actor.light_id = lightfov.add_light("torch", x, z, actor.flashlight_on)
 	end
 
 	return actor
@@ -89,10 +89,9 @@ end
 function M.update(actor)
 	local moving = iso.entity_is_moving(actor.id)
 	local lm = iso.entity_last_move(actor.id)
-	local yaw = iso.camera_get_yaw()
 	local dir = actor.facing
 	if math.abs(lm[1]) > 1e-4 or math.abs(lm[2]) > 1e-4 then
-		dir = facing.pick(actor.facing, lm[1], lm[2], yaw)
+		dir = facing.pick(actor.facing, lm[1], lm[2]) -- camera yaw is fixed at 45 deg (PLAN D6)
 	end
 	apply_anim(actor, moving and "walk" or "idle", dir, false)
 

@@ -168,3 +168,15 @@ Xvfb + Mesa 软件渲染，在本机就能截图，不碰用户桌面。像素�
 ### 5.3 波次
 
 ① R1、R2、R3、R4、R5a、R5b 并行 → ② R5c → ③ code-reviewer 按 §5.1/§5.2 与原 A5 清单复审，审查代理要看 Xvfb 截图（day/night × exterior/cutaway）→ ④ 主代理验收，通过后合入 main。
+
+### 5.4 R5b 第 2 次审查 FAIL 的根因与裁定（最后一次返工）
+
+根因（计划缺陷，不是代理能力问题）：
+1. 光源链路被拆给两个所有者：地图光源在 `mapbuild`（R5a）里直接 `iso.light_add`，光源表与着色在 `lightfov`（R5b），两边都没有接线，窗光与 §3.3 光源表成了死代码。
+2. UI-UX §7.1 没写 `move_dir` 能否改键，代理自行定为不可改，导致 WASD 对冲突检测不可见。
+
+裁定：
+- **`move_dir` 可改键**（照 UI-UX §7.3 的“摇杆整轴可绑 move_dir”）：键盘为 4 个方向槽 `up/left/down/right`，默认 W/A/S/D，存在 `bindings` 里，冲突检测、保留键检查、改键界面与存档都按普通槽处理；手柄为 LS 整轴。删除 `fixed` 字段。
+- **光源统一走 `lightfov`**：`mapbuild.apply(plan, opts)` 接受 `opts.add_light(name, x, z)`，地图里的所有光源都经它创建；地点数据的光源只写 `name`（取 `data/lights.lua` 的条目）和位置，不再硬编码颜色/半径。剖面模式下每个窗格按 ART-AUDIO §3.1 放一个 `window` 光（半径 3，室外环境光 × 0.6），随时间滑块重新着色。
+- 尚未实现的入口（`cursor_free`、`open_wheel` 轮盘）在 `input.lua` 注释里标明“后续里程碑”；`screen` 只标真实存在的入口，`validate()` 检查字符串型 `screen` 指向的动作在该设备上确有绑定。
+- 本次返工由 coder-sonnet 执行，文件所有权临时扩大到 `mapbuild.lua` 的光源部分与 `data/locations/*.lua` 的光源字段。再不过即停止返工，由主代理亲自修复或交用户决策。

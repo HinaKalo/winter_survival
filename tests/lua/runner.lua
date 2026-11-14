@@ -7,6 +7,8 @@ local test_files = {
   "test_core",
   "test_data_locations",
   "test_facing",
+  "test_input",
+  "test_lightfov",
   "test_mapbuild",
 }
 

@@ -167,16 +167,37 @@ pub const TileMap = struct {
         return self.tiles[self.index(x, y)];
     }
 
+    /// 按新 kind 的 TileDef 重置格子的 flags（blocked <- solid、opaque <- opaque）与 tag；kind 0 或未定义则清零。
+    fn resetCellFromDef(self: *TileMap, idx: usize, kind: u16) void {
+        if (self.getDef(kind)) |d| {
+            var f: u8 = 0;
+            if (d.solid) f |= Flag.blocked;
+            if (d.@"opaque") f |= Flag.@"opaque";
+            self.flags[idx] = f;
+            self.tag[idx] = d.tag;
+        } else {
+            self.flags[idx] = 0;
+            self.tag[idx] = 0;
+        }
+    }
+
     pub fn set(self: *TileMap, x: i32, y: i32, kind: u16, height: u8) void {
         if (!self.inBounds(x, y)) return;
+        const idx = self.index(x, y);
         const old_op = self.isOpaque(x, y);
-        self.tiles[self.index(x, y)] = .{ .kind = kind, .height = height };
+        self.tiles[idx] = .{ .kind = kind, .height = height };
+        self.resetCellFromDef(idx, kind);
         if (old_op != self.isOpaque(x, y)) self.opacity_version +%= 1;
         self.markDirtyAround(x, y);
     }
 
     pub fn fill(self: *TileMap, kind: u16, height: u8) void {
         @memset(self.tiles, Tile{ .kind = kind, .height = height });
+        if (self.tiles.len > 0) {
+            self.resetCellFromDef(0, kind);
+            @memset(self.flags, self.flags[0]);
+            @memset(self.tag, self.tag[0]);
+        }
         self.opacity_version +%= 1;
         self.markAllDirty();
     }
@@ -620,4 +641,39 @@ test "flags, tags, opacity_version, and chunk_dirty" {
         dirty_n += 1;
     };
     try testing.expectEqual(@as(usize, 4), dirty_n);
+}
+
+test "set/fill reset flags and tag from the TileDef of the new kind" {
+    var m = try TileMap.init(std.testing.allocator, 4, 4);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    const wall = try m.defineTile(.{ .top = 2, .side = 2, .solid = true, .@"opaque" = true, .tag = 7 });
+
+    m.set(1, 1, wall, 2);
+    try std.testing.expectEqual(Flag.blocked | Flag.@"opaque", m.getFlags(1, 1));
+    try std.testing.expectEqual(@as(u8, 7), m.getTag(1, 1));
+
+    // 覆写为地面：旧的 blocked/opaque/tag 必须被清掉，并递增 opacity_version
+    m.setFlag(1, 1, 4, true); // 额外标志位也会被重置
+    const v0 = m.opacity_version;
+    m.set(1, 1, floor, 0);
+    try std.testing.expectEqual(@as(u8, 0), m.getFlags(1, 1));
+    try std.testing.expectEqual(@as(u8, 0), m.getTag(1, 1));
+    try std.testing.expect(m.opacity_version != v0);
+    try std.testing.expect(m.isWalkable(1, 1));
+
+    // 擦除（kind 0）也清零
+    m.set(1, 1, wall, 1);
+    m.set(1, 1, 0, 0);
+    try std.testing.expectEqual(@as(u8, 0), m.getFlags(1, 1));
+    try std.testing.expectEqual(@as(u8, 0), m.getTag(1, 1));
+
+    m.fill(wall, 1);
+    try std.testing.expectEqual(Flag.blocked | Flag.@"opaque", m.getFlags(3, 3));
+    try std.testing.expectEqual(@as(u8, 7), m.getTag(0, 2));
+    @memset(m.chunk_dirty, false);
+    m.fill(floor, 0);
+    try std.testing.expectEqual(@as(u8, 0), m.getFlags(3, 3));
+    try std.testing.expectEqual(@as(u8, 0), m.getTag(0, 2));
+    try std.testing.expect(m.chunk_dirty[0]);
 }

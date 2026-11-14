@@ -111,13 +111,12 @@ var gpa = std.heap.DebugAllocator(.{}){};
 | `W` `A` `S` `D` | 按**屏幕**方向移动主角（W 远离镜头，S 朝向镜头，A 左，D 右） |
 | 鼠标左键 | 点击可走格子，主角寻路前往 |
 | 鼠标悬停 | 高亮所在格：白色为可走，红色为不可走 |
-| `Q` / `E` | 相机旋转（每次 90°，平滑过渡） |
 | `Z` / `X` | 放大 / 缩小（按住持续生效） |
 | `F5` | 热重载 Lua 脚本 |
 | `ESC` | 退出 |
 | `~` | 打开 / 关闭控制台 |
 
-左上角 HUD 显示 FPS、主角所在格坐标与高度、悬停格信息、当前 BGM 与已播放音效计数。场景中有 3 只史莱姆会在附近随机游走。
+启动后默认进入标题界面；开发时可设置环境变量 `WS_SCENE=m2_demo` 直接进入 M2 地图演示（入口见 `assets/main.lua`）。
 
 ## 架构
 
@@ -150,17 +149,17 @@ winter_survival/
 │       └── tests.zig      kit 纯逻辑测试根
 ├── assets/                演示游戏资源（Lua 脚本、音频、美术）
 │   ├── main.lua           游戏入口（_init / _update / _draw）
-│   ├── scripts/           子模块：world_gen、hero、slimes、cursor、hud，以及音频封装 audio
+│   ├── scripts/           Lua 模块：core/、ui/、scenes/、view/、data/，以及音频封装 audio
 │   ├── audio/             catalog.json（工具生成）、sfx/*.wav、bgm/*.ogg
-│   ├── textures/tiles.png 瓦片图集（8×4 格，每格 32×32）
-│   └── sprites/           hero.png（4×4 帧，每帧 32×48）、slime.png（4×1 帧，每帧 32×32）
+│   ├── textures/tiles.png 瓦片图集（8×8 格，每格 64×64，图尺寸 512×512）
+│   └── sprites/           char_placeholder.png、char_marcus.png（每帧 64×96）、door_leaf.png、props/
 ├── assets_src/            资产清单：audio.json（pixel-hero-demo 格式）、art.json
 ├── tests/
 │   ├── probe/smoke.lua    默认探针场景
 │   └── tools/             Python 单元测试（assets.py 与 ci/ 脚本）
 ├── tools/
 │   ├── assets.py          资产流水线 CLI（placeholder / audio / art / check）
-│   ├── gen_assets.py      Pillow 占位美术生成器（由 assets.py placeholder 调用）
+│   ├── gen_m2_placeholders.py  Pillow 占位美术生成器（由 assets.py placeholder 调用）
 │   └── new_game.py        生成新游戏项目
 ├── ci/                    Jenkins 流水线与脚本（见 CI 一节）
 └── docs/                  设计文档（见上文"设计文档"表）；ENGINE-BASE.md 为引擎原始设计
@@ -169,7 +168,7 @@ winter_survival/
 ### 渲染思路
 
 - **真 3D 世界**：地面瓦片是 3D 方块的顶面与侧面；角色是竖直四边形（billboard），始终朝向相机的水平方向。
-- **正交等距相机**：`yaw = 45°`、`pitch = 30°` 得到 2:1 像素等距观感，可用 `camera_set_angles` 调整（如 35.264° 为真等距）。
+- **正交等距相机**：`yaw = 45°`、`pitch = 30°` 得到 2:1 像素等距观感，相机朝向锁定，不提供旋转或改角接口（D6）。
 - **精灵透明**：精灵使用 `alpha_cutoff = 0.5` 镂空，不做混合，因此可以直接写入深度缓冲，正确遮挡。
 - **深度缓冲**：遮挡关系完全由深度缓冲解决，不需要按距离排序。
 - **深度重映射（HUD 置顶）**：世界投影矩阵左乘一个重映射矩阵 `z' = 0.25·z + 0.75·w`，把世界深度压到 NDC `[0.5, 1]`。Delve 的 2D 绘制（`draw` / `text`）深度约为 0.4999，因此 HUD 永远画在世界之上。
@@ -259,7 +258,7 @@ package.path = "assets/?.lua;assets/scripts/?.lua;" .. package.path
 
 因此：
 
-- `require("hero")` 加载 `assets/scripts/hero.lua`；
+- `require("view.actors")` 加载 `assets/scripts/view/actors.lua`；
 - `require("iso")` 加载引擎内置的 `iso` 库；
 - 路径相对于**当前工作目录**，所以必须在项目根目录运行。`zig build run` 已自动设置。
 
@@ -287,14 +286,14 @@ if iso.key_pressed(keys.ESCAPE) then iso.quit() end
 
 ### 同时使用 Delve 自带库
 
-除 `iso` 库外，脚本中可以直接 `require` 使用 Delve 的库，典型用法见 `assets/scripts/hud.lua`：
+除 `iso` 库外，脚本中可以直接 `require` 使用 Delve 的库，例如：
 
 ```lua
 local draw = require("draw")   -- 矩形、线等 2D 图形
 local text = require("text")   -- 文字
 ```
 
-可用的库包括：`assets`、`display`、`draw`、`text`、`graphics`、`input.mouse`、`input.keyboard`。HUD 使用调色板索引绘制（如 `0` 黑、`7` 白、`10` 黄）。
+可用的库包括：`assets`、`display`、`draw`、`text`、`graphics`、`input.mouse`、`input.keyboard`。
 
 注意：不要调用 `display.set_resolution`，它会改变 HUD 坐标。
 
@@ -312,7 +311,7 @@ local text = require("text")   -- 文字
 
 | 函数 | 返回 | 说明 |
 |---|---|---|
-| `map_create(w, h)` | — | 重建地图为 w×h（最小 1×1），所有格子清空为种类 0 |
+| `map_create(w, h)` | — | 重建地图为 w×h（1×1 到 128×128，超出钳制），所有格子清空为种类 0 |
 | `map_size()` | `{w, h}` | 当前地图尺寸 |
 | `map_set(x, y, kind, height)` | — | 设置格子种类与高度（高度钳制到 0..255）；越界忽略 |
 | `map_get(x, y)` | `{kind, height}` 或 `nil` | 读取格子；越界返回 `nil`。种类 0 为空格 |
@@ -324,6 +323,10 @@ local text = require("text")   -- 文字
 |---|---|---|
 | `tileset_load(path, cols, rows)` | `bool` | 加载瓦片图集，按 cols×rows 等分；成功返回 `true` |
 | `tile_define(top, side, solid, liquid)` | `kind` | 定义瓦片种类。`top`、`side` 为图集格子索引（`row × cols + col`）；`solid` 实心，`liquid` 液体，二者都不可走。失败返回 0 |
+| `tile_define_ex(top, side, side_cap, solid, liquid, opaque, tag)` | `kind` | 完整定义；`side_cap < 0` = 同 `side`；`opaque` 挡视线；`tag` 为 0..255 |
+| `tile_define_ex2(top, side, side_cap, side_base, solid, liquid, opaque, tag)` | `kind` | 同上，另带 `side_base`（最下一段 level 0–1 侧面的图集格；`< 0` = 同 `side`，M2-PLAN §5.1）。`map_set`/`map_fill` 会按该 kind 的定义重置格子的 blocked/opaque 标志与 tag |
+| `overlay_add_tex(g, x, y, atlas, r, g, b, a)` | — | 贴图覆盖层格；`atlas` 须在 0..63，越界忽略并计入 `overlay_stats()` |
+| `overlay_stats()` | `{cells, rejected_atlas}` | 覆盖层格数与被拒绝的越界图集格累计次数 |
 | `map_top_y(x, y)` | `f32` | 格顶世界高度（`height × height_unit`）；越界或空格返回 0 |
 | `map_walkable(x, y)` | `bool` | 格子非空、非实心、非液体 |
 | `map_can_step(fx, fy, tx, ty)` | `bool` | 两格都可走且高差不超过 `max_step`（默认 1） |
@@ -341,9 +344,10 @@ local text = require("text")   -- 文字
 | `camera_set_target(x, y, z)` | — | 设置相机注视点。若已跟随实体，会被跟随逻辑逐帧覆盖 |
 | `camera_get_target()` | `{x, y, z}` | 当前注视点 |
 | `camera_follow(id)` | — | 相机平滑跟随实体；`id` 为 0 时取消跟随 |
-| `camera_rotate(steps)` | — | 每步旋转 90°，平滑过渡；负数为反向 |
-| `camera_set_angles(yaw, pitch)` | — | 立即设置偏航角与俯仰角（度）；`pitch` 钳制到 `[5, 85]` |
-| `camera_get_yaw()` | `f32` | 当前平滑后的偏航角（度） |
+| `camera_get_yaw()` | `f32` | 偏航角，恒为 45（D6：相机朝向锁定 yaw 45° / pitch 30°，不提供旋转与改角接口） |
+| `camera_set_ppu(ppu)` | — | 设置每世界单位的像素数（相机像素基准）；非有限值或 `≤ 0` 时置 0 |
+| `camera_get_ppu()` | `f32` | 当前有效的像素基准 |
+| `camera_set_snap(b)` | — | 开关相机像素吸附 |
 | `camera_set_zoom(z)` | — | 设置缩放，钳制到 `[0.25, 4]` |
 | `camera_get_zoom()` | `f32` | 当前缩放 |
 | `camera_set_view_height(h)` | — | 设置视野高度（世界单位）；仅 `h > 0.1` 时生效 |
@@ -388,7 +392,7 @@ local text = require("text")   -- 文字
 
 | 函数 | 返回 | 说明 |
 |---|---|---|
-| `highlight_tile(x, y, r, g, b, a)` | — | 高亮指定格子的顶面（半透明）；仅对非空格子绘制 |
+| `highlight_tile(x, y, r, g, b, a)` | — | 高亮指定格子的顶面（半透明），仅对非空格子绘制（空格/越界时清除高亮）；走覆盖层组 15（纯色覆盖层里最后绘制）；同一时刻只有一个 |
 | `highlight_clear()` | — | 清除高亮 |
 
 ### 输入
@@ -627,7 +631,7 @@ end
 `tools/assets.py` 是资产 CLI（Python 3.10+，标准库；占位美术与美术导入检查需要 Pillow）。路径均相对项目根目录，即 `tools/` 的父目录。
 
 ```bash
-python3 tools/assets.py placeholder                                 # 生成占位美术（tools/gen_assets.py）
+python3 tools/assets.py placeholder                                 # 生成占位美术（tools/gen_m2_placeholders.py）
 python3 tools/assets.py audio build [--pixel-hero DIR] [--only ID...] [--out DIR]
 python3 tools/assets.py audio sync --from DIR
 python3 tools/assets.py art import --from DIR [--only NAME...]
@@ -636,7 +640,7 @@ python3 tools/assets.py check [--junit FILE]
 
 | 子命令 | 作用 |
 |---|---|
-| `placeholder` | 运行 `tools/gen_assets.py`，生成占位美术 |
+| `placeholder` | 运行 `tools/gen_m2_placeholders.py`，生成占位美术（tiles、角色表、门、道具） |
 | `audio build` | 在 pixel-hero-demo 中运行 `audio.build`（`--check --skip-missing`，只构建 `assets_src/audio.json` 中的音频），输出默认到 `out/audio`，完成后自动执行 `audio sync`。pixel-hero-demo 目录取 `--pixel-hero`，否则取环境变量 `PIXEL_HERO_DEMO`，否则 `../pixel-hero-demo` |
 | `audio sync --from DIR` | `DIR` 为 `audio.build` 的输出（含 `report.json` 与 `final/`）。把清单中每个音频复制到 `assets/audio/<id><扩展名>`，重写 `catalog.json`，并删除不再属于任何 id 的音频文件。任何缺失或失败的 id 都会列出全部问题，且不写入任何文件 |
 | `art import --from DIR` | 对 `source` 为 `genai` 或 `pixelflow` 的美术条目，把 `DIR/<name>.png` 复制到其 `dest`；并检查尺寸、模式与调色板 |
@@ -653,7 +657,7 @@ python3 tools/assets.py check [--junit FILE]
 ### 清单
 
 - `assets_src/audio.json`：pixel-hero-demo 的 `audio/assets.json` 格式，包含 `defaults` 与 `assets`。每个条目定义 id、类别、增益，以及生成来源（`webaudio`、`jsfxr` 或 `compose`）。
-- `assets_src/art.json`：美术清单，结构为 `{"version": 1, "palette": null 或调色板路径, "art": [{name, dest, size, frame, source}]}`。`source` 为 `placeholder`、`genai`、`pixelflow` 或 `manual`。当前三项为：`hero`（128×192，帧 32×48）、`slime`（128×32，帧 32×32）、`tiles`（256×128，帧 32×32）。
+- `assets_src/art.json`：美术清单，结构为 `{"version": 1, "palette": null 或调色板路径, "art": [{name, dest, size, frame, source}]}`。`source` 为 `placeholder`、`genai`、`pixelflow` 或 `manual`。`source` 为 `placeholder` 的条目包括 `tiles`（512×512，帧 64×64）、`char_placeholder`（512×768，帧 64×96）、`door_leaf` 与道具；`char_marcus`、`skin` 为 `manual`。
 
 ### 音频规格
 
@@ -675,7 +679,7 @@ python3 tools/assets.py check [--junit FILE]
 
 ```bash
 python3 tools/assets.py audio build --pixel-hero ../pixel-hero-demo
-python3 tools/assets.py art import --from ../pixel-hero-demo/out/genai/assets --only hero
+python3 tools/assets.py art import --from ../pixel-hero-demo/out/genai/assets --only NAME
 python3 tools/assets.py check --junit reports/linux/assets.xml
 ```
 
@@ -746,11 +750,11 @@ python3 tools/new_game.py NAME [--dest DIR] [--title T] [--delve DIR] [--git]
 
 `assets/main.lua` 的结构可以作为模板：
 
-- `_init()`：生成地形（`world_gen.generate`）、生成角色、设置相机；
-- `_update(dt)`：处理输入、更新游戏逻辑；
-- `_draw()`：绘制 HUD。
+- `_init()`：初始化语言、输入、主题与设置，压入起始场景；
+- `_update(dt)`：更新场景与全局组件；
+- `_draw()`：绘制场景与提示。
 
-把 `world_gen`、`hero`、`slimes`、`hud` 替换为你自己的模块即可。
+把 `scenes/` 下的场景替换为你自己的模块即可（场景通过 `core/scene` 压栈）。
 
 ### 替换美术
 
@@ -758,7 +762,7 @@ python3 tools/new_game.py NAME [--dest DIR] [--title T] [--delve DIR] [--git]
 
 **瓦片图集**（`tileset_load(path, cols, rows)`）
 
-- 图集按 `cols × rows` 等分，每格尺寸 = 图宽 / cols、图高 / rows。演示为 8×4 格、每格 32×32，图尺寸 256×128。
+- 图集按 `cols × rows` 等分，每格尺寸 = 图宽 / cols、图高 / rows。演示为 8×8 格、每格 64×64，图尺寸 512×512（`view/mapbuild.lua` 以 `tileset_load(path, 8, 8)` 加载）。
 - 格子索引 = `row × cols + col`，从左上开始按行计数。
 - 每个瓦片种类有两个索引：`top`（顶面）和 `side`（侧面）。
 - 顶面是 1×1 世界单位的正方形，应绘制为正方形。
@@ -769,11 +773,11 @@ python3 tools/new_game.py NAME [--dest DIR] [--title T] [--delve DIR] [--git]
 - 每帧尺寸为 `frame_w × frame_h` 像素，列数 = 图宽 / frame_w，行数 = 图高 / frame_h。
 - 帧号 = `row × cols + col`。
 - **脚底锚点**：精灵的底边中点对应实体的脚底位置（`entity_spawn` 的 `x, z`），因此每帧的脚应位于图像底部中央，底部留出尽量少的透明边距。
-- 精灵的世界尺寸由 `entity_spawn(..., w, h)` 决定，与像素大小无关。建议 `w : h` 与帧的宽高比保持一致（演示中 hero 为 1 : 1.5，slime 为 1 : 1）。
-- 角色朝向约定：演示中 hero 的行号 0 下、1 左、2 右、3 上，与 `entity_facing` 返回值一致。
+- 精灵的世界尺寸由 `entity_spawn(..., w, h)` 决定，与像素大小无关。建议 `w : h` 与帧的宽高比保持一致（演示中角色帧为 64×96，即 1 : 1.5）。
+- 角色朝向：`view/facing.lua` 将 4 个方向映射到精灵表的行（`row_base` 为 0 或 4，另有水平翻转），动画帧表也在该文件中定义。
 - 精灵使用 alpha 镂空（`alpha_cutoff = 0.5`），透明度低于 50% 的像素会被丢弃，不支持半透明。
 
-美术占位图由 `tools/gen_assets.py` 生成，可以作为参考：
+美术占位图由 `tools/gen_m2_placeholders.py` 生成，可以作为参考：
 
 ```bash
 python3 tools/assets.py placeholder
@@ -838,7 +842,7 @@ try iso.engine.register(.{
 - **未处理高 DPI**：鼠标坐标与 `window_size` 在高 DPI 屏幕上可能不一致。
 - **没有鼠标滚轮**：缩放使用 `Z` / `X` 键。
 - **实体 id 会被复用（ABA 问题）**：实体销毁后 id 可能分配给新实体。持有旧 id 的脚本需要检查 `entity_exists`，避免长期持有 id。
-- **单条路径最多 64 个点**：`entity_path_to` 截断超出部分。演示中 `hero.lua` 通过在到达后再次调用来分段处理长路径。
+- **单条路径最多 64 个点**：`entity_path_to` 截断超出部分。需要超长路径时，可在到达后再次调用来分段处理。
 - **音频只支持整首循环**：Delve 没有循环点 API，带 intro 的 BGM 会整首循环（见"音频"一节）。
 - **音频没有空间化、混响或优先级系统**：只有按 id 的节流与 24 个语音的上限。
 - **演示未使用的音效**：`sfx/hit_light`、`sfx/jump`、`sfx/coin` 已入库，但演示游戏尚未播放它们。

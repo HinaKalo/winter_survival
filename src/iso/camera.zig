@@ -69,9 +69,9 @@ pub const iso_height_unit: f32 = 0.408248; // 1 / sqrt(6)
 
 pub const IsoCamera = struct {
     target: Vec3 = Vec3.zero,
+    /// 固定 45°（D6：无旋转）；仅为公式保留字段，没有任何写入接口。
     yaw: f32 = 45.0,
     pitch: f32 = 30.0,
-    yaw_goal: f32 = 45.0,
     distance: f32 = 60.0,
     zoom: f32 = 1.0,
     min_zoom: f32 = 0.25,
@@ -140,12 +140,6 @@ pub const IsoCamera = struct {
         return self.right().cross(self.forward()).norm();
     }
 
-    pub fn rotateStep(self: *IsoCamera, steps: i32) void {
-        const base = if (std.math.isFinite(self.yaw_goal)) self.yaw_goal else self.yaw;
-        const next = base + 90.0 * @as(f32, @floatFromInt(steps));
-        if (std.math.isFinite(next)) self.yaw_goal = next;
-    }
-
     /// 非有限输入忽略（zoom 不变）。
     pub fn setZoom(self: *IsoCamera, z: f32) void {
         if (!std.math.isFinite(z)) return;
@@ -155,17 +149,7 @@ pub const IsoCamera = struct {
 
     pub fn tick(self: *IsoCamera, dt_in: f32) void {
         const dt = sanitizeDt(dt_in);
-        if (!std.math.isFinite(self.yaw)) self.yaw = 45.0;
-        if (!std.math.isFinite(self.yaw_goal)) self.yaw_goal = self.yaw;
-        const k = @min(1.0, 8.0 * dt);
-        const diff = self.yaw_goal - self.yaw;
-        // diff 溢出为 Inf 时直接对齐，避免 Inf*0 = NaN 写入 yaw
-        if (!std.math.isFinite(diff) or @abs(diff) < 0.01) {
-            self.yaw = self.yaw_goal;
-        } else {
-            const ny = self.yaw + diff * k;
-            if (std.math.isFinite(ny)) self.yaw = ny else self.yaw = self.yaw_goal;
-        }
+        self.yaw = 45.0;
         if (self.follow_goal) |g_raw| {
             if (vec3Finite(g_raw)) { // 非有限目标忽略
                 const g = clampWorld(g_raw);
@@ -342,17 +326,6 @@ test "worldToScreen / screenToPlane inverse" {
     }
 }
 
-test "rotateStep and tick converge" {
-    var cam = IsoCamera{};
-    cam.rotateStep(1);
-    try std.testing.expectEqual(@as(f32, 135), cam.yaw_goal);
-    cam.rotateStep(-3);
-    try std.testing.expectEqual(@as(f32, -135), cam.yaw_goal);
-    var i: usize = 0;
-    while (i < 600) : (i += 1) cam.tick(1.0 / 60.0);
-    try std.testing.expectEqual(cam.yaw_goal, cam.yaw);
-}
-
 test "zoom clamp" {
     var cam = IsoCamera{};
     cam.setZoom(100);
@@ -376,17 +349,11 @@ test "follow smoothing" {
     try approx(cam.target.z, 5);
 }
 
-test "tick does not overshoot yaw_goal for large dt" {
-    for ([_]f32{ 1.0, 10.0 }) |dt| {
-        var cam = IsoCamera{};
-        cam.yaw_goal = 135;
-        cam.tick(dt);
-        try std.testing.expect(cam.yaw <= 135 and cam.yaw >= 45);
-        cam.yaw = 45;
-        cam.yaw_goal = -90;
-        cam.tick(dt);
-        try std.testing.expect(cam.yaw >= -90 and cam.yaw <= 45);
-    }
+test "yaw is fixed at 45 degrees through tick" {
+    var cam = IsoCamera{};
+    cam.yaw = 200;
+    cam.tick(0.1);
+    try std.testing.expectEqual(@as(f32, 45), cam.yaw);
 }
 
 test "update(0,0) yields finite ray" {
@@ -399,11 +366,11 @@ test "update(0,0) yields finite ray" {
 }
 
 fn camFinite(cam: *const IsoCamera) !void {
-    const vals = [_]f32{ cam.target.x, cam.target.y, cam.target.z, cam.yaw, cam.yaw_goal, cam.zoom, cam.pitch, cam.viewport_w, cam.viewport_h };
+    const vals = [_]f32{ cam.target.x, cam.target.y, cam.target.z, cam.yaw, cam.zoom, cam.pitch, cam.viewport_w, cam.viewport_h };
     for (vals) |v| try std.testing.expect(std.math.isFinite(v));
 }
 
-test "garbage input: setZoom / rotateStep / tick" {
+test "garbage input: setZoom / tick" {
     const nan = std.math.nan(f32);
     const inf = std.math.inf(f32);
     var cam = IsoCamera{};
@@ -414,12 +381,7 @@ test "garbage input: setZoom / rotateStep / tick" {
     try approx(cam.zoom, 2); // Inf 视为非法，忽略
     cam.setZoom(-5);
     try approx(cam.zoom, 0.25);
-    cam.rotateStep(std.math.maxInt(i32));
-    cam.rotateStep(std.math.minInt(i32));
-    try camFinite(&cam);
     // 非法 dt 视为 0：状态不变
-    cam.yaw = 45;
-    cam.yaw_goal = 135;
     cam.follow_goal = Vec3.new(10, 0, 10);
     for ([_]f32{ nan, inf, -inf, -1 }) |dt| {
         cam.tick(dt);
@@ -438,7 +400,6 @@ test "garbage input: setZoom / rotateStep / tick" {
     cam.tick(0.1);
     try camFinite(&cam);
     cam.yaw = nan;
-    cam.yaw_goal = nan;
     cam.tick(0.1);
     try camFinite(&cam);
 }
@@ -459,14 +420,6 @@ test "extreme finite values never write NaN/Inf into camera state" {
         cam.update(1280, 720);
         for (cam.proj.m) |col| for (col) |v| try std.testing.expect(std.math.isFinite(v));
         for (cam.view.m) |col| for (col) |v| try std.testing.expect(std.math.isFinite(v));
-    }
-    // tick: yaw 差值溢出
-    for ([_]f32{ 0, 0.016, 1 }) |dt| {
-        var cam = IsoCamera{};
-        cam.yaw = 3e38;
-        cam.yaw_goal = -3e38;
-        cam.tick(dt);
-        try std.testing.expect(std.math.isFinite(cam.yaw));
     }
     // tick: follow 插值溢出
     for ([_]f32{ 0, 0.016, 1 }) |dt| {
@@ -576,4 +529,48 @@ test "effectivePpu and snapToPixel" {
     try approx(sz.x, 0);
     try approx(sz.y, 0);
     try approx(sz.z, 0);
+}
+
+test "viewport sizes (odd/even) set half extents and keep center mapping" {
+    const sizes = [_][2]f32{ .{ 1280, 720 }, .{ 1279, 719 }, .{ 801, 600 }, .{ 1, 1 } };
+    for (sizes) |sz| {
+        var cam = IsoCamera{ .pixels_per_unit = iso_ppu, .snap_pixels = true };
+        cam.target = Vec3.new(3.3, 0.4, 5.7);
+        cam.update(sz[0], sz[1]);
+        try std.testing.expectEqual(sz[0], cam.viewport_w);
+        try std.testing.expectEqual(sz[1], cam.viewport_h);
+        const he = cam.halfExtents();
+        try std.testing.expectApproxEqRel(sz[0] * 0.5 / iso_ppu, he.x, 1e-4);
+        try std.testing.expectApproxEqRel(sz[1] * 0.5 / iso_ppu, he.y, 1e-4);
+        // 视图中心恒为 viewport/2（奇数尺寸时是半像素）
+        const c = cam.worldToScreen(cam.view_target);
+        try std.testing.expectApproxEqAbs(sz[0] * 0.5, c.x, 1e-2);
+        try std.testing.expectApproxEqAbs(sz[1] * 0.5, c.y, 1e-2);
+    }
+}
+
+test "snapToPixel parity: snapped points are a whole number of pixels from the snapped view center" {
+    const sizes = [_][2]f32{ .{ 1280, 720 }, .{ 1279, 719 } };
+    var prng = std.Random.DefaultPrng.init(77);
+    const rnd = prng.random();
+    for (sizes) |sz| {
+        var cam = IsoCamera{ .pixels_per_unit = iso_ppu, .snap_pixels = true };
+        cam.target = Vec3.new(7.123, 0.3, 9.456);
+        cam.update(sz[0], sz[1]);
+        const center = cam.worldToScreen(cam.view_target);
+        var i: usize = 0;
+        while (i < 40) : (i += 1) {
+            const p = Vec3.new(rnd.float(f32) * 20, rnd.float(f32) * 3, rnd.float(f32) * 20);
+            const sp = cam.snapToPixel(p);
+            const s = cam.worldToScreen(sp);
+            const dx = s.x - center.x;
+            const dy = s.y - center.y;
+            // 允许 f32 误差：整数像素偏移
+            try std.testing.expectApproxEqAbs(@round(dx), dx, 0.05);
+            try std.testing.expectApproxEqAbs(@round(dy), dy, 0.05);
+            // 吸附位移不超过半个像素
+            const raw = cam.worldToScreen(p);
+            try std.testing.expect(@abs(raw.x - s.x) <= 0.55 and @abs(raw.y - s.y) <= 0.55);
+        }
+    }
 }

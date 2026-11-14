@@ -10,6 +10,7 @@ const coords = @import("coords.zig");
 const camera = @import("camera.zig");
 const tilemap = @import("tilemap.zig");
 const lightmap = @import("lightmap.zig");
+const overlay = @import("overlay.zig");
 pub const Dir = coords.Dir;
 pub const GridPos = coords.GridPos;
 const IsoCamera = camera.IsoCamera;
@@ -111,6 +112,13 @@ pub const World = struct {
         for (self.entities.items) |*e| {
             if (e.alive) self.despawn(e.id);
         }
+    }
+
+    /// 清空整个场景状态：实体（旧 id 立即失效）、光源、覆盖层。
+    pub fn clearScene(self: *World, lm: *LightMap, ov: *overlay.Overlays) void {
+        self.clear();
+        lm.clear();
+        ov.clearAll();
     }
 
     pub fn get(self: *World, id: u32) ?*Entity {
@@ -630,4 +638,33 @@ test "generational ids, clear, path 256 cap, and pickCandidates" {
     try testing.expectEqual(@as(usize, 2), n);
     try testing.expectEqual(front, hits[0].id);
     try testing.expectEqual(back, hits[1].id);
+}
+
+test "clearScene empties entities, lights, overlays and invalidates ids" {
+    var w = World.init(testing.allocator);
+    defer w.deinit();
+    var lm = try LightMap.init(testing.allocator, 8, 8);
+    defer lm.deinit();
+    var ov = overlay.Overlays.init(testing.allocator);
+    defer ov.deinit();
+
+    const a = try w.spawn(.{});
+    const b = try w.spawn(.{});
+    const l = lm.add(.{ .x = 2, .z = 2, .radius = 3, .color = .{ 1, 1, 1 } });
+    try testing.expect(l != 0 and lm.get(l) != null);
+    ov.add(3, 1, 1, .{ 255, 0, 0, 255 });
+    ov.add(15, 2, 2, .{ 255, 0, 0, 255 });
+
+    w.clearScene(&lm, &ov);
+    try testing.expect(w.get(a) == null and w.get(b) == null);
+    var it = w.iterator();
+    try testing.expect(it.next() == null);
+    try testing.expect(lm.get(l) == null);
+    try testing.expectEqual(@as(u32, 0), ov.total);
+
+    // 复用槽位后旧 id 仍无效
+    const c = try w.spawn(.{});
+    try testing.expect(c != a and c != b);
+    try testing.expect(w.get(a) == null and w.get(b) == null);
+    try testing.expect(w.get(c) != null);
 }

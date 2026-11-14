@@ -206,6 +206,8 @@ pub fn los(map: *const TileMap, x0: i32, y0: i32, x1: i32, y1: i32) bool {
 pub fn canSee(map: *const TileMap, ox: i32, oy: i32, radius: f32, cone: Cone, tx: i32, ty: i32) bool {
     if (!std.math.isFinite(radius) or radius < 0) return false;
     if (!map.inBounds(ox, oy) or !map.inBounds(tx, ty)) return false;
+    // 朝向含 NaN/Inf 时无法判定锥形，直接视为不可见
+    if (!std.math.isFinite(cone.fx) or !std.math.isFinite(cone.fy) or std.math.isNan(cone.half_angle_deg) or cone.half_angle_deg == -std.math.inf(f32)) return false;
 
     const dx: f32 = @floatFromInt(tx - ox);
     const dy: f32 = @floatFromInt(ty - oy);
@@ -314,4 +316,147 @@ test "cone fov and mask merge" {
     m2.orWith(m1);
     try testing.expect(m2.count > before);
     try testing.expect(m2.get(2, 5));
+}
+
+/// 随机铺设地图：每格以概率 p 放墙（高度 4），否则放地面。
+fn fillRandom(m: *TileMap, rand: std.Random, floor: u16, wall: u16, p: f32) void {
+    for (0..m.height) |yi| {
+        for (0..m.width) |xi| {
+            const x: i32 = @intCast(xi);
+            const y: i32 = @intCast(yi);
+            if (rand.float(f32) < p) {
+                m.set(x, y, wall, 4);
+            } else {
+                m.set(x, y, floor, 0);
+            }
+        }
+    }
+}
+
+test "endpoint wall is visible, intervening wall blocks" {
+    var m = try TileMap.init(testing.allocator, 10, 10);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    const wall = try m.defineTile(.{ .top = 2, .side = 2, .solid = true, .@"opaque" = true });
+    m.fill(floor, 0);
+    m.set(7, 5, wall, 4);
+
+    // 端点为墙：墙本身可见（LOS 不检查终点）
+    try testing.expect(los(&m, 2, 5, 7, 5));
+    try testing.expect(los(&m, 7, 5, 2, 5));
+    try testing.expect(canSee(&m, 2, 5, 20, .{}, 7, 5));
+
+    // 中间有墙：被挡住
+    m.set(4, 5, wall, 4);
+    try testing.expect(!los(&m, 2, 5, 7, 5));
+    try testing.expect(!los(&m, 7, 5, 2, 5));
+    try testing.expect(!canSee(&m, 2, 5, 20, .{}, 7, 5));
+    // 墙后的地面不可见
+    try testing.expect(!canSee(&m, 2, 5, 20, .{}, 6, 5));
+}
+
+test "fov matches per-cell canSee on seeded random maps" {
+    const seeds = [_]u64{ 1, 2, 3, 4 };
+    for (seeds) |seed| {
+        var prng = std.Random.DefaultPrng.init(seed);
+        const rand = prng.random();
+
+        var m = try TileMap.init(testing.allocator, 20, 20);
+        defer m.deinit();
+        const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+        const wall = try m.defineTile(.{ .top = 2, .side = 2, .solid = true, .@"opaque" = true });
+        fillRandom(&m, rand, floor, wall, 0.25);
+
+        var mask = try Mask.init(testing.allocator, 20, 20);
+        defer mask.deinit();
+
+        const ox: i32 = rand.intRangeLessThan(i32, 0, 20);
+        const oy: i32 = rand.intRangeLessThan(i32, 0, 20);
+        const radius: f32 = @floatFromInt(rand.intRangeAtMost(i32, 1, 12));
+        const cone: Cone = if (seed % 2 == 0)
+            .{ .half_angle_deg = 180 }
+        else
+            .{
+                .fx = @floatFromInt(rand.intRangeAtMost(i32, -1, 1)),
+                .fy = @floatFromInt(rand.intRangeAtMost(i32, -1, 1)),
+                .half_angle_deg = 20 + rand.float(f32) * 120,
+            };
+        // 锥形朝向可能为零向量（退化为全向），两种情况都需要覆盖
+
+        const added = fov(&m, ox, oy, radius, cone, &mask);
+        try testing.expectEqual(mask.count, added);
+
+        var y: i32 = 0;
+        while (y < 20) : (y += 1) {
+            var x: i32 = 0;
+            while (x < 20) : (x += 1) {
+                const expected = canSee(&m, ox, oy, radius, cone, x, y);
+                try testing.expectEqual(expected, mask.get(x, y));
+            }
+        }
+    }
+}
+
+test "NaN and Inf inputs are not visible and do not crash" {
+    var m = try TileMap.init(testing.allocator, 8, 8);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    m.fill(floor, 0);
+
+    var mask = try Mask.init(testing.allocator, 8, 8);
+    defer mask.deinit();
+
+    const bad_radii = [_]f32{ std.math.nan(f32), std.math.inf(f32), -std.math.inf(f32), -1.0 };
+    for (bad_radii) |r| {
+        try testing.expect(!canSee(&m, 1, 1, r, .{}, 3, 3));
+        try testing.expectEqual(@as(u32, 0), fov(&m, 1, 1, r, .{}, &mask));
+    }
+    try testing.expectEqual(@as(u32, 0), mask.count);
+
+    // 非法朝向：视为不可见，不崩溃
+    const bad_cones = [_]Cone{
+        .{ .fx = std.math.nan(f32), .fy = 1, .half_angle_deg = 60 },
+        .{ .fx = 1, .fy = std.math.inf(f32), .half_angle_deg = 60 },
+        .{ .fx = 1, .fy = 0, .half_angle_deg = std.math.nan(f32) },
+        .{ .fx = 1, .fy = 0, .half_angle_deg = -std.math.inf(f32) },
+    };
+    for (bad_cones) |c| {
+        try testing.expect(!canSee(&m, 1, 1, 10, c, 3, 3));
+        try testing.expectEqual(@as(u32, 0), fov(&m, 1, 1, 10, c, &mask));
+    }
+    try testing.expectEqual(@as(u32, 0), mask.count);
+
+    // 越界原点 / 目标：不可见
+    try testing.expect(!canSee(&m, -1, 1, 10, .{}, 3, 3));
+    try testing.expect(!canSee(&m, 1, 1, 10, .{}, 8, 3));
+}
+
+test "omnidirectional canSee and los are symmetric on random pairs" {
+    var prng = std.Random.DefaultPrng.init(0x5eed_0001);
+    const rand = prng.random();
+
+    var m = try TileMap.init(testing.allocator, 24, 24);
+    defer m.deinit();
+    const floor = try m.defineTile(.{ .top = 1, .side = 1 });
+    const wall = try m.defineTile(.{ .top = 2, .side = 2, .solid = true, .@"opaque" = true });
+    fillRandom(&m, rand, floor, wall, 0.2);
+
+    var trues: u32 = 0;
+    var falses: u32 = 0;
+    var i: u32 = 0;
+    while (i < 1000) : (i += 1) {
+        const ax = rand.intRangeLessThan(i32, 0, 24);
+        const ay = rand.intRangeLessThan(i32, 0, 24);
+        const bx = rand.intRangeLessThan(i32, 0, 24);
+        const by = rand.intRangeLessThan(i32, 0, 24);
+        // 半径取 40 以覆盖距离门限；默认锥为全向，应严格对称
+        const ab = canSee(&m, ax, ay, 40, .{}, bx, by);
+        const ba = canSee(&m, bx, by, 40, .{}, ax, ay);
+        try testing.expectEqual(ab, ba);
+        try testing.expectEqual(los(&m, ax, ay, bx, by), los(&m, bx, by, ax, ay));
+        if (ab) trues += 1 else falses += 1;
+    }
+    // 样本需同时包含可见与不可见两类，否则对称性检查没有意义
+    try testing.expect(trues > 0);
+    try testing.expect(falses > 0);
 }

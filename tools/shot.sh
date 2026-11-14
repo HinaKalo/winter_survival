@@ -67,6 +67,7 @@ if [ -n "$LANG_CODE" ]; then
   fi
   cat > "$SAVES_FILE" <<EOF
 return {
+  version = 1,
   lang = "$LANG_CODE",
 }
 EOF
