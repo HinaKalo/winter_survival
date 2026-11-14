@@ -108,4 +108,25 @@ function T.pure_module()
   assert(not src:find("iso%."), "no engine calls")
 end
 
+-- M4-user 审查第 1 轮（Codex P2）：非有限的朝向或摇杆（inf / NaN）按“无朝向”处理（cosθ = 1）或忽略摇杆，
+-- 结果不依赖候选顺序；score 永不返回 NaN。
+function T.non_finite_direction_is_ignored()
+  local inf, nan = math.huge, 0 / 0
+  local cands = { C("far", 2, 0), C("near", 1, 0) }
+  local rev = { cands[2], cands[1] }
+  for _, face in ipairs({ { x = inf, y = 0 }, { x = nan, y = 1 }, { x = -inf, y = inf } }) do
+    local a = { x = 0, y = 0, face = face }
+    local s = ft.score(a, cands[1], face)
+    assert(s == nil or s == s, "score is never NaN")
+    local p1, p2 = ft.pick(a, cands, { mode = "home" }), ft.pick(a, rev, { mode = "home" })
+    assert(p1 and p2 and p1.id == "near" and p2.id == "near", "nearest wins regardless of order")
+  end
+  local a = A(0, 0, 1, 0)
+  local east, north = C("east", 2, 0), C("north", 0, -1.5)
+  for _, st in ipairs({ { x = inf, y = 0 }, { x = 0, y = nan } }) do
+    local got = ft.pick(a, { north, east }, { mode = "home", stick = st })
+    assert(got and got.id == "east", "non-finite stick is ignored, facing used")
+  end
+end
+
 return T

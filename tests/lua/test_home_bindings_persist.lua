@@ -71,4 +71,46 @@ function T.outdated_bindings_dropped_other_settings_kept()
   assert(ok, tostring(err))
 end
 
+-- M4-user 审查第 1 轮（Codex P1/P2）：损坏的绑定在导入时被拒绝（返回 false, "invalid"，保留默认），
+-- 不会让改键界面在 format_binding 时崩溃，也不会让之后的保存失败。
+-- 合法绑定字段：key（数字）、shift/ctrl（布尔）；btn（数字）、lt（布尔）；axis（"ls"|"rs"）、dir（"up"|"down"|"left"|"right"）。
+-- 出现其它字段或类型不符 = 非法。
+function T.malformed_bindings_are_rejected()
+  local serialize = require("core.serialize")
+  local ok, err = pcall(function()
+    local cyc = { key = keys.J }
+    cyc.self = cyc
+    local cases = {
+      { pad = { open_journal = { { axis = "ls", dir = 42 } } } },
+      { pad = { open_journal = { { axis = 7, dir = "up" } } } },
+      { pad = { open_journal = { { axis = "ls", dir = "sideways" } } } },
+      { keyboard = { open_journal = { { key = "J" } } } },
+      { keyboard = { open_journal = { { key = keys.J, shift = "yes" } } } },
+      { mouse = { open_journal = { { btn = {} } } } },
+      { keyboard = { open_journal = { cyc } } },
+    }
+    for i, tbl in ipairs(cases) do
+      tbl.version = input.BINDINGS_VERSION
+      input.reset_all()
+      local good, why = input.import_bindings(tbl)
+      assert(not good and why == "invalid", "case " .. i .. " rejected, got " .. tostring(good) .. "/" .. tostring(why))
+      for _, a in ipairs(input.ACTIONS) do
+        for _, dev in ipairs({ "keyboard", "mouse", "pad" }) do
+          for _, slot in ipairs(input.slot_ids(a.id, dev)) do
+            local b = input.get_binding(dev, a.id, slot)
+            if b then
+              local fine, e = pcall(input.format_binding, dev, b)
+              assert(fine, "case " .. i .. ": format_binding " .. dev .. " " .. a.id .. ": " .. tostring(e))
+            end
+          end
+        end
+      end
+      local enc = pcall(serialize.encode, input.export_bindings())
+      assert(enc, "case " .. i .. ": bindings still serialize after a rejected import")
+    end
+  end)
+  restore()
+  assert(ok, tostring(err))
+end
+
 return T
