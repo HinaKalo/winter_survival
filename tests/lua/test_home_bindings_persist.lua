@@ -8,8 +8,12 @@ local input = require("core.input")
 local save = require("core.save")
 local settings = require("ui.settings")
 
+local i18n = require("core.i18n")
+
 local T = {}
 
+-- settings.load() applies everything (hold threshold, language, ...); put the globals back so later
+-- suites see the same state as before this file ran.
 local function restore()
   sys.save_delete("settings")
   input.reset_all()
@@ -18,6 +22,7 @@ local function restore()
 end
 
 function T.rebind_survives_restart()
+  local hold, lang = input.HOLD_S, i18n.get_lang()
   local ok, err = pcall(function()
     sys.save_delete("settings")
     input.reset_all()
@@ -35,10 +40,13 @@ function T.rebind_survives_restart()
     assert(got and got.key == keys.SEMICOLON, "saved binding is loaded back after restart")
   end)
   restore()
+  input.set_hold_s(hold)
+  i18n.set_lang(lang)
   assert(ok, tostring(err))
 end
 
 function T.outdated_bindings_dropped_other_settings_kept()
+  local hold, lang = input.HOLD_S, i18n.get_lang()
   local ok, err = pcall(function()
     sys.save_delete("settings")
     input.reset_all()
@@ -58,6 +66,8 @@ function T.outdated_bindings_dropped_other_settings_kept()
     assert(settings.data.bindings == nil, "outdated bindings are discarded")
   end)
   restore()
+  input.set_hold_s(hold)
+  i18n.set_lang(lang)
   assert(ok, tostring(err))
 end
 
