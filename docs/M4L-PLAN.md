@@ -37,3 +37,13 @@ P0 只完成 P0-2（已合入）与 P0-3（输入层），其余 P0 项（P0-1/4
 |---|---|---|
 | A 会话层 | `game/home_session.lua` | coder-opencode（Sonnet medium） |
 | B 场景+HUD+黄昏/黎明+标题入口+i18n | `scenes/home.lua`、`ui/hud_home.lua`、`scenes/dusk.lua`、`scenes/dawn.lua`、`scenes/title.lua`、`assets/i18n/{zh,en,ko}.lua`（键前缀 home./dusk./dawn.；P0-1 拆分前仍是单文件） | coder-sonnet（依赖 A 的接口，可先按冻结接口并行） |
+
+## 5. 待办（审查 P3 与已知外观问题，试玩后统一精修）
+
+- 选中角色死亡后 `M.selected` 不重选，F 无反应（按 1–6/Tab 可恢复）（`scenes/home.lua:196-218`）。
+- 死亡角色的人物仍留在房间里（`sync_actors` 只遍历存活者）。
+- `select_N` 超过队伍人数时回绕，应忽略。
+- `recipe.insulate_I/II.name` 三语缺键（可制作时显示原始键名）。
+- 提示栏 ui_up / ui_left 显示裸 “U” “L” 字形；室内墙为大块灰色；房间温度标签贴近站点标记。
+- 测试 `wake_resumes_the_job` 的 `j == nil` 分支偏宽（任务完成也算过）。
+- 菜单打开时时间暂停（有意为之，试玩后决定是否保留）。
