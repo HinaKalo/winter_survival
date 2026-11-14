@@ -61,14 +61,14 @@
 
 - 参数：在现有 `--probe/--script/--save-dir/--no-audio/--dev` 之外加 `--scene <name>`、`--fixture <name>`。两者都要求同时给 `--dev`，否则打印用法并 `error.BadArguments`。名字用 `save_name.isValid` 的白名单（`[a-z0-9_-]{1,32}`）校验。用法串同步更新。
 - `sys.launch_opts() -> { dev = bool, scene = string|nil, fixture = string|nil }`。
-- `sys.list_files(rel_dir, suffix) -> { "rel/path/a.lua", ... }`：只列普通文件，**递归**，结果按字节序排序，路径用 `/`。`rel_dir` 必须是相对路径、以 `assets/` 或 `tests/` 开头、不含 `..` 和反斜杠，否则返回 `nil, "bad_dir"`；目录不存在返回空表。`suffix` 可为 nil。
+- `sys.list_files(rel_dir, suffix) -> { "rel/path/a.lua", ... }`：只列普通文件，**递归**，结果按字节序排序，路径用 `/`。`rel_dir` 必须是相对路径、以 `assets/` 或 `tests/` 开头、不含 `..` 和反斜杠，否则返回 `nil, "bad_dir"`；目录不存在返回空表；其他枚举失败（打开失败但不是“不存在”、遍历中途出错、分配失败）一律返回 `nil, "io_error"`，不得返回部分结果。`suffix` 可为 nil。
 - Zig 单测：参数解析（缺参数、未给 `--dev`、非法名字）、`list_files` 的路径校验与排序（纯逻辑部分拆成可测函数）。
 
 **Lua**
 
 - `tests/lua/runner.lua`：去掉显式列表，改为 `sys.list_files("tests/lua", ".lua")` 中文件名匹配 `^test_.*%.lua$` 的全部套件，按名字排序执行。
 - `tests/lua/test_layering.lua`：`file_list` 改用 `sys.list_files`，删除 `io.popen`；检查目录加上 `sim/cmd`、`sim/query`、`sim/schema`（递归已覆盖，断言里写明）。
-- `assets/main.lua`：保留 `WS_SCENE` 环境变量作为 `--scene` 的旧别名，直到 M4 结束（`tools/shot.sh` 仍在用）。
+- `assets/main.lua`：起始场景取 `sys.launch_opts().scene`，没有时再读 `WS_SCENE`（`--scene` 优先）；保留 `WS_SCENE` 环境变量作为 `--scene` 的旧别名，直到 M4 结束（`tools/shot.sh` 仍在用）。
 
 ### 3.1 P0-1 文本表拆分
 
@@ -432,3 +432,14 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 | Q13 | CI verify 任务的归档规则增加 `out/balance/report.json`、`tests/fixtures/*.sav`、`tests/fixtures/manifest.lua`，作为 W0 的一项 CI 改动（先写失败测试） | 主代理 |
 | 流程 | 测试先行、CI 全绿、Codex 审查（见 §1.2） | 用户（2026-11-14） |
 
+
+### 9.2 P0-0 验收第 1 轮（2026-11-14）
+
+实现 bb92952。Windows CI #8（full）403/403 绿，luatest 在 Windows 上自动发现全部套件（229/229）。Codex（gpt-6.1-sol medium）FAIL，裁决：
+
+| 编号 | 问题 | 裁决 | 测试 |
+|---|---|---|---|
+| R1 | `list_files` 打开失败（非不存在）返回空表、`walker.next` 出错当作结束、分配失败静默丢文件 → runner 可能少跑套件仍报绿 | 接受（P1）。改为 `nil, "io_error"` | `test_p0_sys.list_files_io_failure_is_not_empty_success`（打开一个文件当目录）；中途出错与分配失败无法稳定构造，靠审查核对 |
+| R2 | `--scene` 解析了但 `main.lua` 没读 | 接受（主代理测试漏项） | `test_p0_sys.main_lua_reads_launch_scene` |
+| R3 | `assets/`、`tests/` 下的 junction 可指向仓库外 | 不接受：这两个目录受版本控制，`list_files` 只给本仓库脚本用，没有 mod，不在威胁模型内 | — |
+| R4 | Lua 分配失败 longjmp 时漏释放原生路径表和目录句柄 | 不阻塞合并（P3）：只在 Lua 堆达到 512 MiB 上限时发生，此时游戏已不可用；记入技术债 | — |

@@ -53,6 +53,23 @@ function T.list_files_rejects_bad_dirs()
   end
 end
 
+-- Review round 1 (Codex P1, fail-closed): only a missing directory is an empty success.
+-- Any other enumeration failure must reach the caller, so runner.lua's assert stops the run
+-- instead of reporting green after a partial or empty suite list.
+function T.list_files_io_failure_is_not_empty_success()
+  -- exists, but is a file, not a directory -> NotDir, not "missing"
+  local r, err = sys.list_files("tests/lua/runner.lua", ".lua")
+  assert(r == nil and err == "io_error",
+    "non-missing open failure must return nil, \"io_error\" (got " .. tostring(r) .. ", " .. tostring(err) .. ")")
+end
+
+-- Review round 1 (main-agent gap): --scene is the primary switch, WS_SCENE only its legacy alias.
+function T.main_lua_reads_launch_scene()
+  local src = read("assets/main.lua")
+  assert(src:find("sys.launch_opts", 1, true), "assets/main.lua must read sys.launch_opts() (--scene was parsed but unused)")
+  assert(src:find("WS_SCENE", 1, true), "WS_SCENE stays as the legacy alias until M4")
+end
+
 function T.runner_discovers_suites()
   local src = read("tests/lua/runner.lua")
   assert(src:find("list_files", 1, true), "runner uses sys.list_files")
