@@ -627,7 +627,7 @@ prio: 紧急(濒死队友/着火) 2.0；NPC 1.2；容器 1.0；门 0.8；工作�
 | `squad_follow/hold/lookout/carry` | R | 无直达键，Q 轮盘内选（数字 1–4） | HUD 指令钮 | D 上/左/右/下（直达，LT 未按住时） | 作用于非当前操控队友 |
 | `squad_wheel` | R | Q | HUD 指令钮 | 无（十字键已直达） | |
 | `evacuate` | R | E（出口区内） | HUD 撤离钮 | 长按 B（出口区内） | 需确认 |
-| `quick_1..4` | W | 5–8 | 点快捷栏 | LT+D 上/右/下/左 | |
+| `quick_1..4` | W | 7、8、9、0（P0-PLAN §9.1 Q4） | 点快捷栏 | LT+D 上/右/下/左 | |
 | `open_inventory` | W | I | HUD 钮 | Back 轮盘 | |
 | `open_craft` | H | B | HUD 钮 | Back 轮盘 | |
 | `open_tech` | H | T | HUD 钮 | Back 轮盘 | |
