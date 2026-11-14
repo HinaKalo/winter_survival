@@ -76,3 +76,58 @@ Delve 固定在 `ci/delve.rev`（当前 `3d09cb88e35290bbac9bc45e7827794d90cc103
 - Windows 首次构建需要从 GitHub 拉取 sokol、zaudio、zmesh、cimgui 等依赖，耗时较长；结果缓存于 `%USERPROFILE%\.ci\zig-cache`。
 - Windows 工作区路径可能超过 260 个字符。若遇到，在 Jenkinsfile 中使用 `customWorkspace` 缩短路径。
 - 截图只归档，不做自动判定。
+
+## 7. 验证任务（Windows 为主）
+
+### 7.1 目的
+
+玩家只在 Windows 上运行游戏，而 Linux 开发机（2 核、7 GB、软件渲染）跑 zig 构建和截图太慢。因此 Windows GPU 代理是主测试台：编码代理改完代码后，把工作区快照交给 Jenkins 任务 `winter_survival-verify`，在 Windows 上完成构建、单测、探针、平衡模拟与真 GPU 截图，再读取其 JUnit 与截图。流水线定义为 `ci/Jenkinsfile.verify`，任务 XML 为 `ci/jobs/winter_survival-verify.xml`。与 `winter_survival` 任务的区别：参数化、不轮询、不做桌面投放（不动 `ThirtyBelow` 目录）。
+
+### 7.2 参数
+
+| 参数 | 含义 |
+|---|---|
+| `REF` | 要测试的 git 引用或 sha，通常为 `refs/ci/<name>`（由 `tools/ci_verify.sh` 创建） |
+| `PROFILE` | `full`（默认）或 `quick`；quick 跳过慢探针（`soak_heap.lua`）与平衡模拟 |
+| `SHOTS` | 多行文本，每行一张截图：`name\|KEY=VAL KEY2=VAL2\|额外游戏参数` |
+| `PROBES` | 可选，探针文件/通配符列表（空格、逗号或换行分隔）；默认 `tests/probe/*.lua` |
+| `BALANCE_DAYS` | 平衡模拟天数，默认 30；仅 full 且 `build.zig` 有 `balance` 步骤时生效 |
+
+阶段：Source（`built-in`）检出 `REF`（任务的 SCM 配置抓取 `refs/heads/*` 与 `refs/ci/*`）→ `setup_delve.sh` → `assets.py check`（含 i18n）与 Python 单测 → stash；Windows GPU：`setup_zig.py` → `ci/verify_steps.py`（`zig build test`、`luatest`（若有该步骤）、逐个 headless 探针、balance）→ `zig build -Dbackend=sokol` → `ci/smoke.py --shots-file` 逐行截图。任何一步失败都不会隐藏其他步骤：先收集，阶段末尾再标记失败。
+
+产物（`reports/**` 归档，JUnit 自动发布）：
+
+| 路径 | 内容 |
+|---|---|
+| `linux/*.xml` | 资产检查、Python 单测 |
+| `windows/unit.xml`、`luatest.xml`、`balance.xml` + `*.log` | 对应步骤，失败时 JUnit 附日志尾部 |
+| `windows/probe_<name>.xml/.log` | 每个探针一份 |
+| `windows/shots/<name>.png` + `<name>.log`、`windows/shots.xml` | 每行 SHOTS 一张截图与游戏日志 |
+
+### 7.3 截图行约定
+
+- 格式 `name|KEY=VAL KEY2=VAL2|额外游戏参数`，`#` 开头为注释；环境变量与参数按 shell 规则分词，后两段可省略。名称只用字母数字与 `._-`，不可重复。
+- 每张截图使用独立存档目录（`--save-dir`），并预写 `settings.sav`：`return { version = 1, lang = "<WS_LANG，缺省 zh>" }`，所以 `WS_LANG=zh|en|ko` 直接生效。
+- 例：`m2_night_zh|WS_SCENE=m2_demo WS_MODE=cutaway WS_HOUR=21 WS_LANG=zh|`；标题画面：`title_zh|WS_LANG=zh|`。
+- 一张截图 = 启动游戏 8 秒、第 5 秒截图，因此场景应在 5 秒内就绪。截图名要表达“场景_状态_语言”，审查者靠名字找图。
+
+### 7.4 代理使用方法
+
+```
+tools/ci_verify.sh --name TAG [--profile quick|full] [--shots FILE] [--probes LIST] [--out DIR]
+tools/ci_verify.sh --gc [DAYS]      # 清理超过 DAYS（默认 7）天的 refs/ci/*
+```
+
+- 脚本用临时 `GIT_INDEX_FILE` 把当前工作区（已跟踪 + 未跟踪，遵守 `.gitignore`）提交为以 `HEAD` 为父的快照，写入共享仓库的 `refs/ci/TAG`（git daemon 可见）。不改分支、暂存区和工作区文件。`TAG` 请带任务名，同名会覆盖旧快照。
+- 触发 `build winter_survival-verify -f -v`，等待结束；控制台输出存 `OUT/console.log`，产物下载到 `OUT/`（`OUT/linux`、`OUT/windows`、`OUT/windows/shots/*.png`）；默认 `OUT=/tmp/claude-1000/ci-verify-TAG`，多个代理并行时请显式 `--out`。
+- 末尾打印：构建号与结果、各 JUnit 套件的总数与失败用例名、截图路径。退出码 0 当且仅当构建 SUCCESS。等待上限 `--max-wait`（默认 3000 秒），超时只放弃等待，Jenkins 中构建仍会继续。
+- 凭据只从 `~/.config/jenkins/ci_auth` 读取（下载时走权限 0600 的临时 curl 配置），不会出现在输出或命令行。
+
+### 7.5 规则
+
+1. 本地 Linux 只做编辑和秒级 Python 检查（`python3 tools/assets.py check`、`python3 -m unittest discover -s tests/tools -t .`、`tools/i18n_check.py`）；不跑 zig 构建，不开 Xvfb。
+2. 每个编码任务完成后运行一次 `ci_verify.sh`（改动影响画面时带 `--shots`）；任务报告里写明构建号与结果。
+3. 审查者读取该构建的产物（JUnit、日志、截图），不要重新构建；需要新截图时用新的 `--name` 再跑一次。
+4. 不以 Linux 兼容为目标：只要 Windows 流水线通过即可。
+5. Windows 只有一个执行器，任务禁止并发，多个构建会排队（full 构建首次需编译依赖，较慢）。日常迭代用 `quick`，合并前用 `full`。若 Windows 代理离线或排队很久，如实报告，不要无限等待。
+6. 用完的快照引用由 `--gc` 清理；不要把 `refs/ci/*` 推到任何远端。

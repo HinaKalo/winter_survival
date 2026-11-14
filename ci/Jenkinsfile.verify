@@ -1,0 +1,95 @@
+// Verification pipeline for work-in-progress snapshots (job: winter_survival-verify).
+// Same Source -> Windows GPU layout as ci/Jenkinsfile but parameterized and WITHOUT the desktop drop.
+// Parameters (defined in the job config, ci/jobs/winter_survival-verify.xml):
+//   REF           git ref or sha to test (e.g. refs/ci/<name>, written by tools/ci_verify.sh)
+//   PROFILE       quick | full (quick skips slow probes and balance)
+//   SHOTS         one screenshot per line: name|KEY=VAL KEY2=VAL2|extra game args
+//   PROBES        optional list/glob of probe files (default tests/probe/*.lua)
+//   BALANCE_DAYS  days for the balance simulation (full profile, only if build.zig has a balance step)
+// Failures are collected: a failing probe does not hide the others; the stage fails at the end.
+pipeline {
+  agent none
+  options {
+    skipDefaultCheckout()
+    timeout(time: 90, unit: 'MINUTES')
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+    disableConcurrentBuilds()
+    timestamps()
+  }
+  stages {
+    stage('Source') {
+      agent { label 'built-in' }
+      steps {
+        deleteDir()
+        // The job's SCM config fetches branches and refs/ci/*; the branch specifier is ${REF}.
+        dir('winter_survival') { checkout scm }
+        sh 'bash winter_survival/ci/setup_delve.sh delve-framework "$(cat winter_survival/ci/delve.rev)"'
+        dir('winter_survival') {
+          sh 'git log -1 --format="testing %H %s" || true'
+          sh 'mkdir -p reports/linux'
+          // assets.py check already includes the i18n group (tools/i18n_check.py).
+          sh 'python3 tools/assets.py check --junit reports/linux/assets.xml'
+          sh 'python3 ci/run_pytests.py --junit reports/linux/unit_py.xml'
+        }
+        stash name: 'src', includes: 'winter_survival/**,delve-framework/**', excludes: '**/.git/**,**/.zig-cache/**,**/zig-out/**,**/zig-pkg/**', useDefaultExcludes: false
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'winter_survival/reports/linux/*.xml'
+          archiveArtifacts artifacts: 'winter_survival/reports/linux/**', allowEmptyArchive: true
+        }
+      }
+    }
+    stage('Windows GPU') {
+      agent { label 'windows && opengl' }
+      steps {
+        deleteDir()
+        unstash 'src'
+        bat '''
+          @echo on
+          set "ZIG_GLOBAL_CACHE_DIR=%USERPROFILE%\\.ci\\zig-cache"
+          python winter_survival\\ci\\setup_zig.py --dest "%USERPROFILE%\\.ci\\tools\\zig-0.16.0" --lua-mirror || exit /b 1
+        '''
+        dir('winter_survival') {
+          // Parameters go through files/env, never interpolated into the batch command line.
+          writeFile file: 'reports/windows/probes.txt', text: (params.PROBES ?: ''), encoding: 'UTF-8'
+          writeFile file: 'reports/windows/shots.txt', text: (params.SHOTS ?: ''), encoding: 'UTF-8'
+          withEnv(["V_PROFILE=${(params.PROFILE ?: 'full').trim()}", "V_DAYS=${(params.BALANCE_DAYS ?: '30').trim()}"]) {
+            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+              bat '''
+                @echo on
+                set "ZIG_GLOBAL_CACHE_DIR=%USERPROFILE%\\.ci\\zig-cache"
+                python ci\\verify_steps.py --zig "%USERPROFILE%\\.ci\\tools\\zig-0.16.0\\zig.exe" --log-dir reports\\windows --profile %V_PROFILE% --probes-file reports\\windows\\probes.txt --balance-days %V_DAYS%
+              '''
+            }
+          }
+          // Probes build with -Dbackend=headless and overwrite the exe; restore the sokol (GPU) one.
+          catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+            bat '''
+              @echo on
+              set "ZIG_GLOBAL_CACHE_DIR=%USERPROFILE%\\.ci\\zig-cache"
+              "%USERPROFILE%\\.ci\\tools\\zig-0.16.0\\zig.exe" build -Dbackend=sokol > reports\\windows\\build_sokol.log 2>&1
+              set RC=%ERRORLEVEL%
+              type reports\\windows\\build_sokol.log
+              exit /b %RC%
+            '''
+          }
+          script { if ((params.SHOTS ?: '').trim()) {
+            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+              bat '''
+                @echo on
+                python ci\\smoke.py --exe zig-out\\bin\\winter_survival.exe --cwd . --seconds 8 --shot-at 5 --shots-file reports\\windows\\shots.txt --out-dir reports\\windows\\shots --junit reports\\windows\\shots.xml
+              '''
+            }
+          } }
+        }
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: 'winter_survival/reports/windows/*.xml'
+          archiveArtifacts artifacts: 'winter_survival/reports/windows/**', allowEmptyArchive: true
+        }
+      }
+    }
+  }
+}
