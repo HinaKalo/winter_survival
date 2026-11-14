@@ -120,7 +120,8 @@ function T.actions_are_listed_and_match_act()
   local cid = first_cid(s)
   local list = hs.actions(s, cid)
   assert(#list > 0)
-  local kinds = { craft = true, research = true, eat = true, drink = true, sleep = true, wake = true, toggle = true }
+  local kinds = { craft = true, research = true, eat = true, drink = true, sleep = true, wake = true, toggle = true,
+    move = true } -- move: M5-3D
   for _, a in ipairs(list) do
     assert(type(a.id) == "string" and kinds[a.kind], "bad action " .. tostring(a.id))
     assert(type(a.label) == "string" and type(a.enabled) == "boolean")

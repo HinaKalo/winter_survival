@@ -107,13 +107,13 @@ stairs = {
 - B1 房间 `ground = true`：墙、板、顶/地这些“实体围护”与地温 `balance.thermal.ground_temp`（4 °C）换热；窗、洞、门仍与室外换热。
 - 楼梯：两层房间之间加一条连接 `{ room = 对方, walls = 0, doors = 0, stairs = 1 }`，`link_g` 增加 `stairs × balance.thermal.g.stair_open`（取 8）。双向对称。
 - 1F 房间的顶/地项不变（保持现有平衡）。
-- `hs.hud(s).indoor` 改为只按 1F 房间平均（避免整体平衡数字漂移）；`hud.rooms` 每项增加 `floor`。
+- 黄昏/黎明报告里的室内平均温度（`home_session` 的 `avg_room_temp`）只按 1F 房间算（避免数字漂移）；`hs.hud(s).rooms` 每项增加 `floor`，`hs.hud(s).chars` 每项增加 `floor`（由 `ch.room` 推出）。
 - 角色位置仍是 `ch.room`；楼层由房间推出。
 
 ### 4.3 会话动作
 
 `hs.actions(s, cid)` 增加 `kind = "move"`，`id = "move:<room>"`（除当前房间外的每个房间，按 room_order），`label = "home.room.<room>"`。
-`hs.act` 走 `home.assign`；白天且角色在家、未睡、存活才可用（否则 `enabled = false`，reason 短键）。失败时状态逐字节不变。
+move 项排在列表最后（不改变现有菜单的默认焦点）。`hs.act` 走 `home.assign`；白天且角色在家、未睡、存活才可用（否则 `enabled = false`，reason 短键）。失败时状态逐字节不变。
 
 ## 5. 视图规则（纯模块，冻结）
 
