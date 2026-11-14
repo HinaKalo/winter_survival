@@ -9,15 +9,15 @@ return {
   ["title.stub_notice"] = "Available in a later milestone",
 
   ["ui.back"] = "Back",
-  ["ui.ok"] = "OK",
+  ["ui.ok"] = "OK",  -- i18n:keep
   ["ui.cancel"] = "Cancel",
   ["ui.confirm"] = "Confirm",
   ["ui.reset_default"] = "Reset Defaults",
-  ["ui.reset_all"] = "Reset All",
+  ["ui.reset_all"] = "Reset All",  -- i18n:keep
   ["ui.on"] = "On",
   ["ui.off"] = "Off",
-  ["ui.close"] = "Close",
-  ["ui.none"] = "—",
+  ["ui.close"] = "Close",  -- i18n:keep
+  ["ui.none"] = "—",  -- i18n:keep
 
   ["settings.title"] = "Settings",
   ["settings.tab.lang"] = "Language",

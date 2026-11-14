@@ -733,6 +733,14 @@ def run_checks(root: Path) -> list:
     groups.append(("lua audio ids", errs, warns))
 
     errs, warns = [], []
+    try:
+        import i18n_check as _i18n
+        errs.extend(_i18n.check(root))
+    except Exception as ex:
+        errs.append(f"i18n check failed: {ex}")
+    groups.append(("i18n", errs, warns))
+
+    errs, warns = [], []
     fonts_cfg_path = root / "assets_src" / "fonts.json"
     if fonts_cfg_path.is_file():
         try:

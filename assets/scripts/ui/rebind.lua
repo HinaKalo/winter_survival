@@ -58,6 +58,16 @@ local function start_capture(action_id, slot)
   }
 end
 
+-- Toast text for an input.set_binding error code; unknown codes fall back to the reserved-key message.
+local ERR_KEYS = {
+  no_entry = "rebind.err_no_entry",
+  non_rebindable = "rebind.err_non_rebindable",
+  reserved = "rebind.err_reserved",
+}
+local function err_text(err)
+  return i18n.t(ERR_KEYS[err] or "rebind.err_reserved")
+end
+
 local function try_commit_binding(dev, action_id, slot, binding)
   if input.is_reserved_binding(dev, binding) then
     widgets.show_toast(i18n.t("rebind.err_reserved"))
@@ -66,7 +76,7 @@ local function try_commit_binding(dev, action_id, slot, binding)
   local conf = input.find_conflict(dev, action_id, binding)
   if conf then
     if not conf.rebindable then
-      widgets.show_toast(i18n.t("rebind.err_reserved"))
+      widgets.show_toast(err_text("non_rebindable"))
       return
     end
     M.conflict = {
@@ -82,7 +92,7 @@ local function try_commit_binding(dev, action_id, slot, binding)
   end
   local ok, err = input.set_binding(dev, action_id, slot, binding)
   if not ok then
-    widgets.show_toast(i18n.t(err == "no_entry" and "rebind.err_no_entry" or "rebind.err_reserved"))
+    widgets.show_toast(err_text(err))
     return
   end
   M.flash_action = action_id
@@ -254,7 +264,7 @@ function M.draw(area)
       on_click = function()
         local ok, err = input.set_binding(dev, sel.id, sel.slot, nil)
         if not ok then
-          widgets.show_toast(i18n.t(err == "no_entry" and "rebind.err_no_entry" or "rebind.err_reserved"))
+          widgets.show_toast(err_text(err))
         end
       end,
     })
@@ -314,7 +324,7 @@ function M.draw(area)
         local ok, err = input.replace_binding(c.dev, c.action_id, c.slot, c.binding, c.other_id, c.other_slot)
         M.conflict = nil
         if not ok then
-          widgets.show_toast(i18n.t(err == "no_entry" and "rebind.err_no_entry" or "rebind.err_reserved"))
+          widgets.show_toast(err_text(err))
         else
           M.flash_action = c.action_id
           M.flash_t = 0.6
@@ -327,7 +337,7 @@ function M.draw(area)
         local ok, err = input.swap_bindings(c.dev, c.action_id, c.slot, c.other_id, c.other_slot)
         M.conflict = nil
         if not ok then
-          widgets.show_toast(i18n.t(err == "no_entry" and "rebind.err_no_entry" or "rebind.err_reserved"))
+          widgets.show_toast(err_text(err))
         else
           M.flash_action = c.action_id
           M.flash_t = 0.6
