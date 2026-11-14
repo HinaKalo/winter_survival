@@ -462,6 +462,8 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 | 白名单 | `SHARED_DEFAULTS` 增加鼠标右键 = `cancel`/`ui_secondary`（M2 起即同键，§7.1 两处都写右键；U 内悬停物品时为 `ui_secondary`） |
 | 新接口 | `input.update(dt)`（main.lua 每帧在 `scene.update` 前调用）、`input.set_hold_s`、`input.set_dev`、`input.pan_vec`、`input.find_conflicts`、公开 `CTX_CONFLICTS`；详见 `tests/lua/test_input_actions.lua` 文件头 |
 | 测试位置 | 逐动作 × 设备的触发判定在 luatest（模拟设备）与探针 `p0_inputs`（真实注入）两处做，规则共用 `tests/lua/p0_input_cases.lua` |
+| 旧存档绑定 | P0-3 改了默认键，M2 存下的 `settings.sav` 绑定会带回旧冲突。`export_bindings` 写入 `version = input.BINDINGS_VERSION`（2）；无版本或版本 < 2 的绑定不导入（`import_bindings` 返回 `false, "outdated"`），沿用新默认。测试 `test_input_actions.old_saved_bindings_are_not_imported` |
+
 ### 9.5 契约回改（2026-11-14）
 
 依 §9.1 “设计文档优先”（Q1、Q2、Q9、Q16）就地回改了 PARALLEL-PLAN §2 的 C3、C6、C7、C8、C9 与 PLAN §4.4。此后 P0-4 以 PARALLEL-PLAN §2 为准；本文 §3.4 的 C3、C6–C9 段、§7 的 Q1、Q2、Q9、Q16 行与 §8 第 4–7 条里的旧名字已作废。
@@ -518,4 +520,3 @@ P0-4 的 C6 部分若 Q1 未裁定，可从 W2 拆出，等裁定后单独做，
 ### 9.7 P0-0 验收第 2 轮（2026-11-14）
 
 返工 309685c，CI #13（quick）558/558，luatest 231/231。OpenCode（anthropic/claude-sonnet-5-5#high）复审 PASS：R1、R2 修复完整。新增 P3（不阻塞，记技术债，与 R4 同类）：`src/kit/sys.zig` 遍历子目录时原生分配失败提前返回，`Walker.deinit` 可能不关闭栈上的子目录句柄。R1 的“遍历中途出错 / 分配失败”两条路径无法稳定构造，仍只有代码审查证据（同 §9.2）。
-| 旧存档绑定 | P0-3 改了默认键，M2 存下的 `settings.sav` 绑定会带回旧冲突。`export_bindings` 写入 `version = input.BINDINGS_VERSION`（2）；无版本或版本 < 2 的绑定不导入（`import_bindings` 返回 `false, "outdated"`），沿用新默认。测试 `test_input_actions.old_saved_bindings_are_not_imported` |
