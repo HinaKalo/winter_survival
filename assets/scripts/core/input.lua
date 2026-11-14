@@ -635,7 +635,7 @@ local function build_entries()
     end
   end
   for _, e in ipairs(list) do
-    if e.kind == nil then
+    if e.kind == nil or e.kind == "stick" then
       for _, h in ipairs(holds) do
         if h.dev == e.dev and h.act ~= e.act and ctx_conflict(e.act.ctx, h.act.ctx)
             and same_binding(e.dev, e.b, h.b) then
@@ -810,7 +810,7 @@ end
 function M.pressed(action_id, device)
   local act = ACTION_BY_ID[action_id]
   if not act then return false end
-  if action_id == "dev_panel" and not M._dev then return false end
+  if (action_id == "dev_panel" or action_id:sub(1, 4) == "dev.") and not M._dev then return false end
   ensure()
   for _, dev in ipairs(DEVICES) do
     if not device or device == dev then
