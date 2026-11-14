@@ -166,4 +166,7 @@ M3 两轮审查都没通过，根因有三：一是计划留了空档（燃料�
 
 - 本机不跑带窗口/Xvfb 的运行、渲染探针、截图（性能不够）；这些只在 Windows CI 上跑。
 - 审查只在合并时做一次（Codex / OpenCode 轮流）；P1/P2 阻断合并，P3 进待办。
-- 磁盘：Jenkins 控制节点剩余 < 1 GiB 会自动下线，所有 CI 卡在队列（2026-11-14 发生过）。已合并分支的 worktree 及时删除；`.zig-cache` 可随时清。
+- 磁盘：Jenkins 控制节点与本机共用磁盘，剩余 < 1 GiB 会自动下线，所有 CI 卡在队列（2026-11-14 发生过）。
+  - `tools/dev_clean.sh [--worktrees] [--dry-run]`：清闲置 24 h 的 worktree 的 `.zig-cache`（> 1.5 GiB 的一律清）、2 天前的 ci-verify 产物与会话临时目录、7 天前的 `refs/ci/*`；`--worktrees` 另删已合并且干净的 worktree（分支保留）。
+  - `tools/ci_verify.sh` 提交前自动检查：剩余 < 2 GiB 先跑 `dev_clean.sh`，仍 < 1.3 GiB 拒绝排队并报错。
+- 批量门禁：`tools/ci_batch.sh --name TAG [--probes ...] BR1 BR2 ...` 在临时 worktree 里把多个分支依次合到 main 上，只跑一次 CI；通过后 `git merge --ff-only integ/TAG` 一次落地（审查在落地前做）。

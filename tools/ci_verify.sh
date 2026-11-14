@@ -58,6 +58,15 @@ fi
 [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]] || die "--name may only contain letters, digits, . _ -"
 case "$PROFILE" in quick|full) ;; *) die "--profile must be quick or full" ;; esac
 [ -f "$CLI_JAR" ] && [ -f "$AUTH_FILE" ] || die "jenkins-cli.jar / ci_auth missing under ~/.config/jenkins"
+
+# Disk preflight: the Jenkins controller shares this disk and goes offline below 1 GiB free, which
+# leaves every build stuck in the queue. Clean regenerable caches first, refuse to queue if still low.
+free_mb() { df -BM --output=avail / | tail -1 | tr -dc 0-9; }
+if [ "$(free_mb)" -lt 2048 ]; then
+  echo "ci_verify: only $(free_mb)M free, running tools/dev_clean.sh" >&2
+  "$HERE/dev_clean.sh" >&2 || true
+  [ "$(free_mb)" -ge 1300 ] || die "only $(free_mb)M free on / (Jenkins controller goes offline below 1 GiB); free space first"
+fi
 [ -z "$SHOTS_FILE" ] || [ -f "$SHOTS_FILE" ] || die "shots file not found: $SHOTS_FILE"
 [ -n "$OUT" ] || OUT="/tmp/claude-1000/ci-verify-$NAME"
 mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
