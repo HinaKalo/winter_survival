@@ -252,7 +252,12 @@ end
 local function start_jobs(state)
   local warm = warmest_room(state)
   for _, ch in ipairs(alive(state)) do
-    if not ch.job and ch.activity ~= "sleep" and ch.activity ~= "out" then
+    local off_duty = ch.activity == "sleep" or ch.activity == "out" or ch.activity == "guard"
+    if ch.job and not off_duty and ch.activity ~= "work" then
+      -- A paused job (activity changed) resumes: jobs are never cancelled by role changes.
+      run(state, { kind = "activity", char = ch.id, value = "work" })
+    end
+    if not ch.job and not off_duty then
       local acted = false
       if ch.needs.energy > 25 then
         acted = try_research(state, ch)
@@ -325,7 +330,18 @@ function M.dusk(state)
   return squad
 end
 
+-- The squad is read back from the night roles (state), so a run restored from a save at the
+-- start of night behaves exactly like an uninterrupted one.
+local function squad_from_roles(state)
+  local out = {}
+  for _, id in ipairs(state.party.order) do
+    if (state.night.roles or {})[id] == "out" then out[#out + 1] = id end
+  end
+  return out
+end
+
 function M.night_start(state, squad)
+  squad = squad or squad_from_roles(state)
   local live = {}
   for _, id in ipairs(squad or {}) do
     local ch = state.party.chars[id]
@@ -350,29 +366,21 @@ function M.manage(state)
   start_jobs(state)
 end
 
--- M3 reference kit (balance.bot_kit); M10 replaces it with normal progression.
-function M.apply_kit(state)
-  if state._bot_kit then return end
-  state._bot_kit = true
-  local kit = balance.bot_kit
-  if not kit then return end
-  for id, n in pairs(kit.items or {}) do
-    inventory.add(state.home.stash, id, n, { force = true })
-  end
-  for id in pairs(kit.blueprints or {}) do
-    state.tech.blueprints[id] = true
-  end
-  require("sim.state").log(state, "bot_kit_applied")
-end
-
-function M.play_day(state)
+-- Plays one game day (06:00 -> next 06:00). Every decision is made from `state` alone, so the
+-- run can be saved/restored at any phase boundary and continued by calling play_day again.
+-- opts.stop_phase: return as soon as the clock enters that phase (before its handler runs).
+function M.play_day(state, opts)
+  opts = opts or {}
   local day = state.clock.day
+  local start_phase = state.clock.phase
   local done = { morning = false, dusk = false, night = false, dawn = false }
-  local squad = {}
+  -- Resuming inside a phase whose handler already ran in the saved run is not supported;
+  -- callers resume at a phase boundary.
   local guard = 0
   while state.clock.phase ~= "ending" and state.clock.day == day and guard < 1500 do
     guard = guard + 1
     local phase = state.clock.phase
+    if opts.stop_phase and phase == opts.stop_phase and phase ~= start_phase then return true end
     if phase == "day" then
       if not done.morning then
         done.morning = true
@@ -382,12 +390,12 @@ function M.play_day(state)
     elseif phase == "dusk" then
       if not done.dusk then
         done.dusk = true
-        squad = M.dusk(state) or {}
+        M.dusk(state)
       end
     elseif phase == "night" then
       if not done.night then
         done.night = true
-        M.night_start(state, squad)
+        M.night_start(state)
       end
       if state.clock.minute % 10 == 0 then M.manage(state) end
     elseif phase == "dawn" then
@@ -403,7 +411,7 @@ end
 
 function M.run(state, opts)
   opts = opts or {}
-  if opts.kit ~= false then M.apply_kit(state) end
+  -- No kit logic here: the reference kit is given by sim.new(seed, { kit = "bot" }) (PLAN 9.1).
   local max_days = opts.days or balance.time.days
   local guard = 0
   while state.clock.phase ~= "ending" and state.clock.day <= max_days and guard < max_days + 2 do

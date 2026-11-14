@@ -60,6 +60,13 @@ local function buy(state, cat, budget, r)
 end
 
 function M.night(state, squad, hours)
+  local prev_reason = inventory.set_reason("expedition_loot")
+  local result = M.night_inner(state, squad, hours)
+  inventory.set_reason(prev_reason)
+  return result
+end
+
+function M.night_inner(state, squad, hours)
   local cfg = balance.expedition
   hours = hours or cfg.hours
   squad = squad or {}
@@ -83,7 +90,7 @@ function M.night(state, squad, hours)
   local gas = inventory.count(state.home.stash, "gasoline")
   if gas < 2 then
     inventory.add(state.home.stash, "gasoline", 2 - gas, { force = true })
-    spent = spent + (2 - gas) * (balance.items and 8 or 8)
+    spent = spent + (2 - gas) * items.get("gasoline").vp
   end
 
   local injured = {}

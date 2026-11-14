@@ -82,10 +82,11 @@ function M.generate(state)
   snaps[#snaps + 1] = make_snap(r, "small", s1, d1, sev1)
   local end1 = s1 + d1 - 1
 
-  -- small snap 2: 100%, day 13..17, >= snap1 end + gap
-  local s2 = math.max(cfg.small2.start[1], end1 + cfg.small2.gap)
-  local s2max = cfg.small2.start[2]
-  if s2 > s2max then s2 = s2max end
+  -- small snap 2: 100%, start drawn in 13..17 and >= snap1 end + gap
+  local lo2 = math.max(cfg.small2.start[1], end1 + cfg.small2.gap)
+  local hi2 = cfg.small2.start[2]
+  if lo2 > hi2 then lo2 = hi2 end
+  local s2 = rng.int(r, lo2, hi2)
   local d2 = rng.int(r, cfg.small2.days[1], cfg.small2.days[2])
   local sev2 = weighted(r, cfg.small2.severity)
   snaps[#snaps + 1] = make_snap(r, "small", s2, d2, sev2)
@@ -94,8 +95,9 @@ function M.generate(state)
   -- small snap 3: 60%, day 21..24, >= snap2 end + gap
   local roll3 = rng.float(r)
   if roll3 < cfg.small3.chance then
-    local s3 = math.max(cfg.small3.start[1], end2 + cfg.small3.gap)
-    if s3 <= cfg.small3.start[2] then
+    local lo3 = math.max(cfg.small3.start[1], end2 + cfg.small3.gap)
+    if lo3 <= cfg.small3.start[2] then
+      local s3 = rng.int(r, lo3, cfg.small3.start[2])
       local sev3 = weighted(r, cfg.small3.severity)
       snaps[#snaps + 1] = make_snap(r, "small", s3, cfg.small3.days, sev3)
     end
@@ -171,13 +173,9 @@ function M.is_big_snap_day(state, day)
 end
 
 function M.wind_chill(state)
-  if M.is_big_snap_day(state, state.clock.day) then return cfg.wind_chill end
+  -- CONTENT 6.2.3: every cold-wave day (small and big) has wind chill
+  if M.snap_on(state, state.clock.day) then return cfg.wind_chill end
   return 0
-end
-
-function M.update_outdoor(state)
-  state.weather.outdoor_temp = M.outdoor_temp(state)
-  return state.weather.outdoor_temp
 end
 
 function M.radio_level(state)
@@ -188,8 +186,31 @@ function M.radio_level(state)
   return 0
 end
 
-local function forecast_entry(r, snap, level)
-  local spec = cfg.forecast[level]
+local function linwei_alive(state)
+  for _, cid in ipairs(state.party.order) do
+    local c = state.party.chars[cid]
+    if c and c.id == "linwei" and c.status == "alive" then return true end
+  end
+  return false
+end
+
+-- Effective forecast spec for a radio level (CONTENT 6.5.3): with linwei alive and
+-- level >= 2, miss and error probabilities are halved and the lead grows by a day.
+function M.forecast_spec(state, level)
+  local base = cfg.forecast[level]
+  local W = balance.weather
+  local spec = { lead = base.lead, day_ok = base.day_ok, severity_ok = base.severity_ok, miss = base.miss }
+  if level >= W.linwei_min_level and linwei_alive(state) then
+    local k = W.linwei_error_mult
+    spec.lead = spec.lead + W.linwei_lead_bonus
+    spec.miss = spec.miss * k
+    spec.day_ok = 1 - (1 - spec.day_ok) * k
+    spec.severity_ok = 1 - (1 - spec.severity_ok) * k
+  end
+  return spec
+end
+
+local function forecast_entry(r, snap, spec)
   local miss = rng.float(r) < spec.miss
   if miss then return nil end
   local day_ok = rng.float(r) < spec.day_ok
@@ -217,11 +238,11 @@ function M.refresh_forecast(state)
   local r = state.rng.weather
   local out = {}
   local today = state.clock.day
-  local spec = cfg.forecast[level]
+  local spec = M.forecast_spec(state, level)
   if level > 0 then
     for _, snap in ipairs(state.weather.snaps) do
       if snap.start_day >= today and snap.start_day - today <= spec.lead then
-        local e = forecast_entry(r, snap, level)
+        local e = forecast_entry(r, snap, spec)
         if e then out[#out + 1] = e end
       end
     end

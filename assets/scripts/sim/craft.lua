@@ -8,6 +8,7 @@ local rng = require("core.rng")
 local chars = require("sim.chars")
 local home = require("sim.home")
 local state_mod = require("sim.state")
+local tech = require("sim.tech")
 
 local M = {}
 
@@ -48,9 +49,28 @@ local function adjusted(n, mult)
   return math.max(1, math.ceil(n * mult - 0.0001))
 end
 
+-- CONTENT 3.1 station tiers: `hearth` recipes run on any stove-class kind, `benchN` recipes on a
+-- bench of level >= N, everything else needs a working station of exactly that kind.
+-- "garage" (repair_car) is not a home station in M3: no kind provides it, so it stays gated
+-- until the milestone that places a garage (reported in M3-R3 handoff).
+local HEARTH_KINDS = { "hearth", "hearth2", "woodstove" }
+
+local function bench_need(station)
+  return type(station) == "string" and tonumber(station:match("^bench(%d)$")) or nil
+end
+
 local function station_ok(state, recipe)
-  if not recipe.station or recipe.station == "hand" or recipe.station == "garage" then return true end
-  return home.usable_station(state, recipe.station) ~= nil
+  local station = recipe.station
+  if not station or station == "hand" then return true end
+  local need = bench_need(station)
+  if need then return bench_level(state) >= need end
+  if station == "hearth" then
+    for _, kind in ipairs(HEARTH_KINDS) do
+      if home.usable_station(state, kind) then return true end
+    end
+    return false
+  end
+  return home.usable_station(state, station) ~= nil
 end
 
 -- Build the effective material list, including per-room amounts for insulation.
@@ -93,37 +113,40 @@ local function have_material(state, ch, entry)
   return false
 end
 
-local function take_material(state, ch, entry)
+-- Takes one material entry from `inv` (actor bag) then `stash`. Pure with respect to everything but
+-- those two bags, so start() can dry-run it on copies before touching the real ones.
+local function take_material(stash, inv, entry)
+  local R = "craft_input"
   if entry.item then
     local left = entry.n
-    local take = math.min(left, inventory.count(ch.inv, entry.item))
+    local take = math.min(left, inventory.count(inv, entry.item))
+    if inventory.count(stash, entry.item) < left - take then return false end
     if take > 0 then
-      inventory.remove(ch.inv, entry.item, take)
+      inventory.remove(inv, entry.item, take, R)
       left = left - take
     end
-    if left > 0 then
-      if inventory.count(state.home.stash, entry.item) < left then return false end
-      inventory.remove(state.home.stash, entry.item, left)
-    end
+    if left > 0 then inventory.remove(stash, entry.item, left, R) end
     return true
   elseif entry.tag then
-    local left = inventory.consume_tag_from(ch.inv, entry.tag, entry.n) or entry.n
+    if inventory.count_tag(inv, entry.tag) + inventory.count_tag(stash, entry.tag) < entry.n then
+      return false
+    end
+    local left = inventory.consume_tag_from(inv, entry.tag, entry.n, R) or entry.n
     if left > 0 then
-      local left2 = inventory.consume_tag_from(state.home.stash, entry.tag, left)
-      left = left2 or left
+      left = inventory.consume_tag_from(stash, entry.tag, left, R) or left
     end
     return left == 0
   elseif entry.any then
     for _, id in ipairs(entry.any) do
-      local total = inventory.count(state.home.stash, id) + inventory.count(ch.inv, id)
+      local total = inventory.count(stash, id) + inventory.count(inv, id)
       if total >= entry.n then
         local left = entry.n
-        local take = math.min(left, inventory.count(ch.inv, id))
+        local take = math.min(left, inventory.count(inv, id))
         if take > 0 then
-          inventory.remove(ch.inv, id, take)
+          inventory.remove(inv, id, take, R)
           left = left - take
         end
-        if left > 0 then inventory.remove(state.home.stash, id, left) end
+        if left > 0 then inventory.remove(stash, id, left, R) end
         return true
       end
     end
@@ -132,11 +155,57 @@ local function take_material(state, ch, entry)
   return false
 end
 
-local function fuel_ok(state, recipe)
+local function counts_of(bag)
+  local out = {}
+  for id, e in pairs(bag.items) do out[id] = e.count end
+  return out
+end
+
+-- Items that left either bag between the two snapshots, sorted by id (deterministic).
+local function refund_list(before_inv, inv, before_stash, stash)
+  local total = {}
+  local function diff(before, bag)
+    for id, n in pairs(before) do
+      local d = n - inventory.count(bag, id)
+      if d > 0 then total[id] = (total[id] or 0) + d end
+    end
+  end
+  diff(before_inv, inv)
+  diff(before_stash, stash)
+  local out = {}
+  for _, id in ipairs(util.sorted_keys(total)) do out[#out + 1] = { item = id, n = total[id] } end
+  return out
+end
+
+local function fuel_mult(recipe, cid)
+  return bonus_of(recipe, cid).fuel or 1.0
+end
+
+-- Fuel precheck with EXACTLY the burn rule (inventory.fuel_cost: floor(pool + n * multiplier)
+-- against the integer stock).
+local function fuel_ok(state, recipe, cid)
   if not recipe.fuel then return true end
-  for id, n in pairs(recipe.fuel) do
-    local pool = (state.home.stash.fuel_frac and state.home.stash.fuel_frac[id]) or 0
-    if inventory.count(state.home.stash, id) + pool < n then return false end
+  local mult = fuel_mult(recipe, cid)
+  for _, id in ipairs(util.sorted_keys(recipe.fuel)) do
+    if not inventory.can_burn(state.home.stash, id, recipe.fuel[id] * mult) then return false end
+  end
+  return true
+end
+
+-- Runs materials then fuel on the given bags. Returns true or false, err (bags may be half-changed
+-- on failure, so only call it on copies unless the precheck already passed).
+local function consume_all(stash, inv, recipe, mats, cid, after_materials)
+  for _, entry in ipairs(mats) do
+    if not take_material(stash, inv, entry) then return false, "missing_material" end
+  end
+  if after_materials then after_materials() end
+  if recipe.fuel then
+    local mult = fuel_mult(recipe, cid)
+    for _, id in ipairs(util.sorted_keys(recipe.fuel)) do
+      if not inventory.burn_fuel(stash, id, recipe.fuel[id] * mult, "craft_fuel") then
+        return false, "missing_fuel"
+      end
+    end
   end
   return true
 end
@@ -165,10 +234,13 @@ function M.can(state, recipe_id, cid, opts)
     end
   end
   local room = opts.room or room_for(state, cid)
+  if opts.room ~= nil and (type(opts.room) ~= "string" or not state.home.rooms[opts.room]) then
+    return false, "bad_room"
+  end
   for _, entry in ipairs(material_list(state, recipe, cid, room)) do
     if not have_material(state, ch, entry) then return false, "missing_material" end
   end
-  if not fuel_ok(state, recipe) then return false, "missing_fuel" end
+  if not fuel_ok(state, recipe, cid) then return false, "missing_fuel" end
   if recipe.effect == "board_window" and not home.boardable_window(state, room) then return false, "no_window" end
   if recipe.effect == "board_hole" and not home.boardable_hole(state, room) then return false, "no_hole" end
   if recipe.effect == "insulate" then
@@ -179,6 +251,7 @@ function M.can(state, recipe_id, cid, opts)
   return true
 end
 
+-- Validate everything, then mutate (PLAN 9.3). Returns true, nil, job or false, err.
 function M.start(state, recipe_id, cid, opts)
   opts = opts or {}
   local ok, err = M.can(state, recipe_id, cid, opts)
@@ -186,22 +259,26 @@ function M.start(state, recipe_id, cid, opts)
   local recipe = recipes.get(recipe_id)
   local ch = state.party.chars[cid]
   local room = opts.room or room_for(state, cid)
-  for _, entry in ipairs(material_list(state, recipe, cid, room)) do
-    if not take_material(state, ch, entry) then return false, "missing_material" end
-  end
-  if recipe.fuel then
-    local fuel_mult = bonus_of(recipe, cid).fuel or 1.0
-    for id, n in pairs(recipe.fuel) do
-      if not inventory.burn_fuel(state.home.stash, id, n * fuel_mult) then
-        return false, "missing_fuel"
-      end
-    end
+  local mats = material_list(state, recipe, cid, room)
+  -- Dry run of the real consumption on copies: catches overlaps the per-entry checks cannot see
+  -- (a material that is also fuel, tag picks that eat the fuel stock, ...).
+  local ok2, err2 = consume_all(util.deep_copy(state.home.stash), util.deep_copy(ch.inv), recipe, mats, cid)
+  if not ok2 then return false, err2 end
+  local before_inv, before_stash = counts_of(ch.inv), counts_of(state.home.stash)
+  -- refund covers materials only (fuel burned at start is never returned)
+  local refund
+  local ok3, err3 = consume_all(state.home.stash, ch.inv, recipe, mats, cid, function()
+    refund = refund_list(before_inv, ch.inv, before_stash, state.home.stash)
+  end)
+  if not ok3 then
+    state_mod.error(state, "craft.start: dry run passed but real consumption failed: " .. tostring(err3))
+    return false, err3
   end
   local work = recipe.minutes or 0
   local b = bonus_of(recipe, cid)
   if b.work then work = work * b.work end
   local speed = 1.0
-  if recipe.station ~= "hand" and recipe.station ~= "garage" then
+  if bench_need(recipe.station) then
     speed = W.bench_speed[bench_level(state)] or 1.0
   end
   state.job_seq = (state.job_seq or 0) + 1
@@ -215,6 +292,7 @@ function M.start(state, recipe_id, cid, opts)
     work_total = work,
     wait_remaining = recipe.wait or 0,
     speed = speed,
+    refund = refund,
     waiting = (work <= 0),
   }
   state.jobs[job.id] = job
@@ -223,18 +301,32 @@ function M.start(state, recipe_id, cid, opts)
     ch.activity = "work"
   end
   state_mod.log(state, "craft_started", { recipe = recipe_id, char = cid })
-  return true, job
+  return true, nil, job
 end
 
+-- Explicit cancel (the only way a job is dropped by a player). CONTENT/PLAN 9.1: progress below
+-- one game minute refunds every material, otherwise nothing is returned. Fuel burned at start
+-- is never refunded. Research jobs delegate to tech.cancel.
 function M.cancel(state, job_id)
+  if type(job_id) ~= "string" then return false, "no_job" end
   local job = state.jobs[job_id]
   if not job then return false, "no_job" end
+  if job.kind == "research" then return tech.cancel(state, "cancel") end
   local ch = state.party.chars[job.actor]
   if ch and ch.job == job_id then
     ch.job = nil
     ch.activity = "idle"
   end
+  local done = (job.work_total or 0) - (job.work_remaining or 0)
+  local refunded = false
+  if not job.waiting and done < W.min_minutes then
+    for _, e in ipairs(job.refund or {}) do
+      inventory.add(state.home.stash, e.item, e.n, { force = true, reason = "refund" })
+    end
+    refunded = true
+  end
   state.jobs[job_id] = nil
+  state_mod.log(state, "craft_cancelled", { recipe = job.recipe, char = job.actor, refunded = refunded })
   return true
 end
 
@@ -242,20 +334,20 @@ local function clear_rubble_loot(state)
   local r = state.rng.loot
   local stash = state.home.stash
   local scrap = rng.int(r, 0, 2)
-  if scrap > 0 then inventory.add(stash, "scrap", scrap, { force = true }) end
-  if rng.float(r) < 0.40 then inventory.add(stash, "planks", 1, { force = true }) end
-  if rng.float(r) < 0.20 then inventory.add(stash, "firewood", 1, { force = true }) end
+  if scrap > 0 then inventory.add(stash, "scrap", scrap, { force = true, reason = "rubble_loot" }) end
+  if rng.float(r) < 0.40 then inventory.add(stash, "planks", 1, { force = true, reason = "rubble_loot" }) end
+  if rng.float(r) < 0.20 then inventory.add(stash, "firewood", 1, { force = true, reason = "rubble_loot" }) end
   if rng.float(r) < 0.12 then
     local roll = rng.float(r)
-    if roll < 0.60 then inventory.add(stash, "canned_beans", 1, { force = true })
-    elseif roll < 0.85 then inventory.add(stash, "canned_soup", 1, { force = true })
-    else inventory.add(stash, "wild_roots", 2, { force = true }) end
+    if roll < 0.60 then inventory.add(stash, "canned_beans", 1, { force = true, reason = "rubble_loot" })
+    elseif roll < 0.85 then inventory.add(stash, "canned_soup", 1, { force = true, reason = "rubble_loot" })
+    else inventory.add(stash, "wild_roots", 2, { force = true, reason = "rubble_loot" }) end
   end
   if rng.float(r) < 0.05 then
     local roll = rng.float(r)
-    if roll < 0.34 then inventory.add(stash, "cloth", 1, { force = true })
-    elseif roll < 0.67 then inventory.add(stash, "components", 1, { force = true })
-    else inventory.add(stash, "bandage", 1, { force = true }) end
+    if roll < 0.34 then inventory.add(stash, "cloth", 1, { force = true, reason = "rubble_loot" })
+    elseif roll < 0.67 then inventory.add(stash, "components", 1, { force = true, reason = "rubble_loot" })
+    else inventory.add(stash, "bandage", 1, { force = true, reason = "rubble_loot" }) end
   end
 end
 
@@ -308,7 +400,7 @@ local function finish(state, job)
   for id, n in pairs(recipe.outputs or {}) do
     local count = n
     if first and yield_bonus > 0 then count = count + yield_bonus end
-    inventory.add(state.home.stash, id, count, { force = true })
+    inventory.add(state.home.stash, id, count, { force = true, reason = "craft_output" })
     first = false
   end
   if ch then
@@ -335,9 +427,13 @@ function M.tick(state, minutes)
         if not ch or ch.status ~= "alive" then
           state.jobs[id] = nil
         else
-          local eff = chars.efficiency(state, ch)
-          job.work_remaining = job.work_remaining - minutes * math.max(0.05, eff) * (job.speed or 1.0)
-          if job.work_remaining <= 0 then
+          -- Work only advances while the actor is working with a positive efficiency; otherwise
+          -- the job is paused and ch.job is kept (PLAN 9.1).
+          local eff = (ch.activity == "work" and ch.job == job.id) and chars.efficiency(state, ch) or 0
+          if eff > 0 then
+            job.work_remaining = job.work_remaining - minutes * eff * (job.speed or 1.0)
+          end
+          if eff > 0 and job.work_remaining <= 0 then
             if job.wait_remaining and job.wait_remaining > 0 then
               job.waiting = true
               ch.job = nil

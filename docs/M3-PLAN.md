@@ -130,6 +130,11 @@ M3 分支从 M2 波次 1 的提交开始，M2 的 `core/layout.lua`（L3）尚�
 | `bot_kit` | 额外建材/燃料/蓝图 | 只在 `sim.new(seed, {kit="bot"})` 建局时放入，`bot.run` 与玩家流程默认不使用 | 删除 |
 | `expedition` | `PLACEHOLDER = true` | 夜间抽象补给，替代 M5/M6 的世界生成与突袭 | 用真实 `worldgen` + `raid_autoresolve` 替换 |
 | `balance.expedition.risk` | 固定受伤概率 | 让外勤有代价，避免抽象补给变成无风险刷物资 | 由 M5/M6 战斗与天气结算取代 |
+| `health.infection_daily_damage` | 5 hp/天 | CONTENT 只给“重伤每天 15% 感染恶化”，没给感染后的伤害；代码保留机制 | M10 定值后改为 CONTENT 数值 |
+| `thermal.cold_body_mood` | −0.4 /h | 体温 < 冷档时的心理条目（CONTENT §6.4.4 无此项） | M8 心理系统接管，按 NARRATIVE §2.6 重定 |
+| `health.stabilize_body_temp` | 20 | 濒死稳定（绷带/急救）后体温至少回到该值（CONTENT 无此数） | M10 定值或删除 |
+| `chars.overweight` | 超重系数 0.5 / 上限 0.5 / ≥0.3 停步 | 载重超限时的移速惩罚（CONTENT §6.4.1 只给伤势载重倍率，无超重规则） | M10 / M5 背包规则落地后重定 |
+| `health.pneumonia_low_body_temp` | 50（取当前体温） | CONTENT 写“过去 24 小时体温 < 50 超过 4 小时”，M3 简化为当前体温 < 50 | M8 记录体温历史后改回 |
 
 判读报告时请同时看：`runs`、每局 `alive`/`deaths`、`determinism.ok`、`errors`。同种子两次 checksum 不同、或 `errors` 非空，说明是模型/序列化 bug，而不是数值问题，先修代码再谈调参。
 
@@ -172,6 +177,7 @@ timeout 8 ./zig-out/bin/winter_survival --no-audio
 | `pairs` 顺序破坏确定性 | 序列化键排序；逻辑遍历一律 `util.sorted_keys`；测试用两次运行逐字节比对兜底 |
 | 浮点跨平台差异 | 不比较不同平台的字节；CI 的确定性断言在同一二进制内做 |
 | M2 的 `core/layout.lua` 与 M3 版本冲突 | M3 只实现纯解析 + 测试；M2 的 `mapbuild.plan` 在其输出上加高度，不重复解析 |
+| `garage` 设施未定义 | `repair_car` 配方的 `station = "garage"`，但 M3 没有任何 home 设施种类提供 `garage`，因此 `repair_car` 目前**无法制作**（`craft.can` 返回 `missing_station:garage`）。这是有意保留的缺口：车库/车辆场景在后续里程碑（M4 之后的家园扩建/外勤载具）定义设施后再放开，届时需在 `craft.lua` 的 `station_ok` 中接入 |
 | 临时 `expedition` 被误当正式设计 | 文件头 `PLACEHOLDER = true`；M5 计划删除并替换为 `worldgen` + `raid_autoresolve`；balance 报告标注 |
 
 ## 9. 返工 1（2026-11-14，主代理核验）

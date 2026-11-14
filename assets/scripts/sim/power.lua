@@ -39,13 +39,17 @@ function M.burn(state, st, item, amount_per_hour, hours)
   return true
 end
 
+-- Electric draw of one station (W). A humidifier at H >= humidifier_stop stops and draws nothing.
+function M.draw(state, st)
+  if not (st.on and st.hp > 0 and is_electric(st)) then return 0 end
+  if st.kind == "humidifier" and state.home.humidity >= balance.humidity.humidifier_stop then return 0 end
+  return P.load[st.kind] or 0
+end
+
 function M.load(state)
   local total = 0
   for _, id in ipairs(util.sorted_keys(state.home.stations)) do
-    local st = state.home.stations[id]
-    if st.on and st.hp > 0 and is_electric(st) then
-      total = total + (P.load[st.kind] or 0)
-    end
+    total = total + M.draw(state, state.home.stations[id])
   end
   return total
 end
@@ -67,6 +71,15 @@ function M.burn_heat(state, st, amount_per_hour, hours)
   return false
 end
 
+-- Fuel definition (balance.power.station) for a burning station, or nil.
+function M.fuel_def(st)
+  local key = "f_" .. tostring(st.kind)
+  if st.kind == "woodstove" and st.level == "low" then key = "f_woodstove_low" end
+  local def = P.station[key]
+  if def and def.fuel then return def end
+  return nil
+end
+
 function M.tick(state, minutes)
   minutes = minutes or balance.thermal.step_minutes
   local h = minutes / 60
@@ -76,14 +89,13 @@ function M.tick(state, minutes)
   for _, id in ipairs(util.sorted_keys(stations)) do
     local st = stations[id]
     if st.on and st.hp > 0 then
-      if st.kind == "hearth" or st.kind == "hearth2" then
-        M.burn_heat(state, st, 0.4, h)
-      elseif st.kind == "snow_barrel" then
-        M.burn_heat(state, st, 0.5, h)
-      elseif st.kind == "propane_heater" then
-        M.burn(state, st, "propane", 0.25, h)
-      elseif st.kind == "woodstove" then
-        M.burn_heat(state, st, st.level == "low" and 0.3 or 0.7, h)
+      local def = M.fuel_def(st)
+      if def then
+        if st.kind == "propane_heater" then
+          M.burn(state, st, def.fuel, def.fuel_per_hour, h)
+        else
+          M.burn_heat(state, st, def.fuel_per_hour, h)
+        end
       end
     end
   end
@@ -123,8 +135,10 @@ function M.tick(state, minutes)
   local remaining = supplied
   for _, id in ipairs(util.sorted_keys(stations)) do
     local st = stations[id]
-    local need = is_electric(st) and (P.load[st.kind] or 0) or 0
-    if need > 0 then
+    local need = M.draw(state, st)
+    if st.kind == "humidifier" and need == 0 then
+      st.powered = false -- stopped (full or off): no draw, no output
+    elseif need > 0 then
       if st.on and st.hp > 0 and remaining >= need - 0.001 then
         st.powered = true
         remaining = remaining - need
@@ -158,7 +172,7 @@ function M.tick(state, minutes)
 
   -- 5. humidifier water
   local humid = stations.f_humidifier
-  if humid and humid.on and humid.hp > 0 and humid.powered and state.home.humidity < 60 then
+  if humid and humid.on and humid.hp > 0 and humid.powered and state.home.humidity < balance.humidity.humidifier_stop then
     humid.fuel_frac.clean_water = (humid.fuel_frac.clean_water or 0) + (1 / 10) * h
     while humid.fuel_frac.clean_water >= 1 do
       if inventory.count(state.home.stash, "clean_water") >= 1 then

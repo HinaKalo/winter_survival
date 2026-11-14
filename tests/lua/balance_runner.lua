@@ -21,11 +21,16 @@ local report = {
 }
 
 local function one_run(seed)
-  local st, err = sim.new(seed)
+  -- PLAN 9.3: acceptance runs use the reference kit (sim.new creates it; the bot never adds it).
+  local st, err = sim.new(seed, { kit = "bot" })
   if not st then return { seed = seed, fatal = err } end
   for _ = 1, days do
     if st.clock.phase == "ending" then break end
-    if not bot.play_day(st) then break end
+    local alive = bot.play_day(st)
+    -- Daily ledger audit (validate + inventory counts + NaN scan); failures land in st.errors,
+    -- which feed report.errors and therefore ok_all.
+    sim.audit_into(st)
+    if not alive then break end
     coroutine.yield()
   end
   local s = sim.summary(st)
@@ -34,7 +39,7 @@ local function one_run(seed)
     day = s.day,
     phase = s.phase,
     alive = s.alive,
-    deaths = s.deaths,
+    deaths = #s.dead,
     food_days = s.food_days,
     fuel_days = s.fuel_days,
     checksum = s.checksum,
@@ -154,6 +159,9 @@ local co = coroutine.create(function()
   if verify then
     local a = one_run(base_seed)
     local b = one_run(base_seed)
+    for _, r in ipairs({ a, b }) do
+      for _, e in ipairs(r.errors or {}) do report.errors[#report.errors + 1] = "verify: " .. e end
+    end
     local ok = a.checksum == b.checksum and a.checksum ~= nil
     report.determinism = { ok = ok, a = a.checksum, b = b.checksum }
     print("balance determinism", tostring(ok), tostring(a.checksum), tostring(b.checksum))

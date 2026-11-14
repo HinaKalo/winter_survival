@@ -4,6 +4,9 @@ local items = require("data.items")
 local inventory = require("sim.inventory")
 local util = require("core.util")
 local state_mod = require("sim.state")
+local balance = require("data.balance")
+local chars = require("sim.chars")
+local home = require("sim.home")
 
 local M = {}
 
@@ -22,7 +25,7 @@ end
 
 local function team_count(state, item_id)
   local n = inventory.count(state.home.stash, item_id)
-  for _, c in ipairs(require("sim.chars").alive(state)) do
+  for _, c in ipairs(chars.alive(state)) do
     n = n + inventory.count(c.inv, item_id)
   end
   return n
@@ -77,6 +80,17 @@ function M.can(state, node_id, actor_id)
   for _, pre in ipairs(node.prereq or {}) do
     if not state.tech.unlocked[pre] then return false, "prereq:" .. pre end
   end
+  -- CONTENT 4.1 exclusive nodes: with the specialist alive only they may research (and must be
+  -- home); without them it needs the blueprint and costs/work x1.5.
+  if node.exclusive then
+    local spec = state.party.chars[node.exclusive]
+    if spec and spec.status == "alive" then
+      if actor_id ~= node.exclusive then return false, "not_specialist" end
+      if spec.activity == "out" then return false, "specialist_away" end
+    elseif not state.tech.blueprints[node_id] then
+      return false, "blueprint"
+    end
+  end
   if node.blueprint and not state.tech.blueprints[node_id] then
     return false, "blueprint"
   end
@@ -91,6 +105,7 @@ function M.can(state, node_id, actor_id)
   return true
 end
 
+-- Validate everything, then mutate (PLAN 9.3). Returns true, nil, job or false, err.
 function M.start(state, node_id, actor_id)
   local ok, err = M.can(state, node_id, actor_id)
   if not ok then return false, err end
@@ -99,24 +114,30 @@ function M.start(state, node_id, actor_id)
   if not actor or actor.status ~= "alive" then return false, "no_actor" end
   if actor.job then return false, "actor_busy" end
   local cost = M.cost_for(state, node, actor)
-  for id, n in pairs(cost) do
-    local left = n
+  local refund = {}
+  -- plan the deductions first: stash, then living characters in party order
+  local plan = {}
+  local pool = chars.alive(state)
+  for _, id in ipairs(util.sorted_keys(cost)) do
+    local left = cost[id]
+    refund[#refund + 1] = { item = id, n = left }
     local from_stash = math.min(left, inventory.count(state.home.stash, id))
     if from_stash > 0 then
-      inventory.remove(state.home.stash, id, from_stash)
+      plan[#plan + 1] = { bag = state.home.stash, id = id, n = from_stash }
       left = left - from_stash
     end
-    if left > 0 then
-      for _, c in ipairs(require("sim.chars").alive(state)) do
-        if left <= 0 then break end
-        local take = math.min(left, inventory.count(c.inv, id))
-        if take > 0 then
-          inventory.remove(c.inv, id, take)
-          left = left - take
-        end
+    for _, c in ipairs(pool) do
+      if left <= 0 then break end
+      local take = math.min(left, inventory.count(c.inv, id))
+      if take > 0 then
+        plan[#plan + 1] = { bag = c.inv, id = id, n = take }
+        left = left - take
       end
     end
     if left > 0 then return false, "material:" .. id end
+  end
+  for _, step in ipairs(plan) do
+    inventory.remove(step.bag, step.id, step.n, "research_input")
   end
   state.job_seq = (state.job_seq or 0) + 1
   local work = M.work_for(state, node, actor)
@@ -127,29 +148,38 @@ function M.start(state, node_id, actor_id)
     actor = actor_id,
     remaining = work,
     total = work,
+    refund = refund,
   }
   state.jobs[job.id] = job
   state.tech.research = job.id
   actor.job = job.id
   actor.activity = "work"
   state_mod.log(state, "research_started", { tech = node_id, actor = actor_id })
-  return true, job
+  return true, nil, job
 end
 
 function M.cancel(state, reason)
   local job_id = state.tech.research
   if not job_id then return false, "no_research" end
   local job = state.jobs[job_id]
+  local refunded = false
   if job then
     local actor = state.party.chars[job.actor]
     if actor and actor.job == job_id then
       actor.job = nil
       actor.activity = "idle"
     end
+    -- PLAN 9.1: full refund only while progress is below one game minute.
+    if (job.total or 0) - (job.remaining or 0) < balance.work.min_minutes then
+      for _, e in ipairs(job.refund or {}) do
+        inventory.add(state.home.stash, e.item, e.n, { force = true, reason = "refund" })
+      end
+      refunded = true
+    end
     state.jobs[job_id] = nil
   end
   state.tech.research = nil
-  state_mod.log(state, "research_cancelled", { tech = job and job.tech, reason = reason })
+  state_mod.log(state, "research_cancelled", { tech = job and job.tech, reason = reason, refunded = refunded })
   return true
 end
 
@@ -163,8 +193,10 @@ function M.tick(state, minutes)
     M.cancel(state, "actor_dead")
     return
   end
-  local eff = require("sim.chars").efficiency(state, actor)
-  job.remaining = job.remaining - minutes * math.max(0.05, eff)
+  -- Progress only while the actor is working; otherwise paused with ch.job kept (PLAN 9.1).
+  local eff = (actor.activity == "work" and actor.job == job_id) and chars.efficiency(state, actor) or 0
+  if eff <= 0 then return end
+  job.remaining = job.remaining - minutes * eff
   if job.remaining <= 0 then
     local node = tech_data.get(job.tech)
     state.tech.unlocked[job.tech] = true
@@ -174,7 +206,7 @@ function M.tick(state, minutes)
     actor.activity = "idle"
     state.stats.researches = (state.stats.researches or 0) + 1
     if node and node.star then
-      require("sim.home").add_station(state, node.star, require("sim.home").station_kind(node.star), nil, 100, false)
+      home.add_station(state, node.star, home.station_kind(node.star), nil, 100, false)
     end
     state_mod.log(state, "research_done", { tech = job.tech })
   end

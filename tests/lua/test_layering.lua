@@ -80,6 +80,81 @@ function T.data_names_are_i18n_keys()
   walk_names(require("data.characters").cards, "characters")
 end
 
+-- Strip comments and return every double-quoted string literal in a Lua source (line, text).
+local function string_literals(src)
+  local out = {}
+  local lineno = 1
+  local i, n = 1, #src
+  while i <= n do
+    local c = src:sub(i, i)
+    if c == "\n" then
+      lineno = lineno + 1
+      i = i + 1
+    elseif c == "-" and src:sub(i, i + 1) == "--" then
+      local long = src:match("^%[(=*)%[", i + 2)
+      if long then
+        local close = "]" .. long .. "]"
+        local e = src:find(close, i + 2, true) or n
+        for _ in src:sub(i, e):gmatch("\n") do lineno = lineno + 1 end
+        i = e + #close
+      else
+        local e = src:find("\n", i, true) or n + 1
+        i = e
+      end
+    elseif c == '"' then
+      local j = i + 1
+      local buf = {}
+      while j <= n do
+        local d = src:sub(j, j)
+        if d == "\\" then
+          buf[#buf + 1] = src:sub(j, j + 1)
+          j = j + 2
+        elseif d == '"' or d == "\n" then
+          break
+        else
+          buf[#buf + 1] = d
+          j = j + 1
+        end
+      end
+      out[#out + 1] = { line = lineno, text = table.concat(buf) }
+      i = j + 1
+    elseif c == "'" then
+      local j = src:find("'", i + 1, true) or n
+      i = j + 1
+    else
+      i = i + 1
+    end
+  end
+  return out
+end
+
+-- Every double-quoted literal in data/ must be an identifier-like key (item ids, i18n keys,
+-- station kinds, ...), never a sentence. Exempt: template grid rows (homes/*.lua) and
+-- legend.lua symbol keys, which are map pictures, not text.
+function T.data_literals_are_identifiers()
+  local checked = 0
+  for _, path in ipairs(file_list("assets/scripts/data")) do
+    local is_home = path:find("/data/homes/", 1, true) ~= nil
+    local is_legend = path:match("/legend%.lua$") ~= nil
+    if not is_legend then
+      for _, lit in ipairs(string_literals(read_file(path))) do
+        local exempt = is_home and (lit.text:match("^[#=%.,%+Dw%a ]*$") ~= nil and #lit.text >= 3 and lit.text:find("[#%.]") ~= nil)
+        if not exempt then
+          checked = checked + 1
+          assert(lit.text:match("^[A-Za-z0-9_.%-]+$"),
+            path .. ":" .. lit.line .. " literal is not an identifier/i18n key: \"" .. lit.text .. "\"")
+        end
+      end
+    end
+  end
+  assert(checked > 100, "literal scan looked at too few strings: " .. checked)
+end
+
+function T.literal_scanner_ignores_comments()
+  local lits = string_literals('local x = "a_b" -- "free text here"\n--[[ "block text" ]] local y = "c.d"')
+  assert(#lits == 2 and lits[1].text == "a_b" and lits[2].text == "c.d", #lits)
+end
+
 function T.data_sources_have_no_prose_fields()
   for _, path in ipairs(file_list("assets/scripts/data")) do
     for line in read_file(path):gmatch("[^\n]+") do

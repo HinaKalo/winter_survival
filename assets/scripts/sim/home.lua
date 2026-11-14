@@ -28,6 +28,12 @@ local DEFAULT_ROOM = {
   f_tripwire = "living",
 }
 
+-- Cold cell (CONTENT 5.3): a 2x3 room inside the house. Its outer envelope is the 10 edge cells;
+-- its door opens to the default room (inner link, mirrored on both sides).
+local function cold_cell_envelope()
+  return { wall = balance.thermal.cold_cell_room.wall, hole = 0, window = 0, broken_window = 0, board = 0, door = 0, door_open = 0 }
+end
+
 local function key(x, y) return tostring(x) .. "," .. tostring(y) end
 
 function M.station_kind(id)
@@ -82,14 +88,21 @@ function M.init(state, opts)
     for _, op in ipairs(lr.openings) do
       room.openings[#room.openings + 1] = { kind = op.kind, x = op.x, y = op.y }
     end
+    -- layout links are one entry per kind (door / wall); merge them per neighbour room
+    local by_room = {}
     for _, link in ipairs(lr.links) do
-      room.links[#room.links + 1] = {
-        room = link.room,
-        walls = link.wall or 0,
-        doors = link.count or 0,
-        door_cells = util.deep_copy(link.cells or {}),
-        open_doors = 0,
-      }
+      local l = by_room[link.room]
+      if not l then
+        l = { room = link.room, walls = 0, doors = 0, door_cells = {}, open_doors = 0 }
+        by_room[link.room] = l
+        room.links[#room.links + 1] = l
+      end
+      if link.kind == "door" then
+        l.doors = l.doors + link.count
+        for _, c in ipairs(link.cells or {}) do l.door_cells[#l.door_cells + 1] = { x = c.x, y = c.y, kind = c.kind } end
+      else
+        l.walls = l.walls + link.count
+      end
     end
     table.sort(room.links, function(a, b) return a.room < b.room end)
     state.home.rooms[id] = room
@@ -109,7 +122,7 @@ function M.init(state, opts)
   end
 
   local damage = layout.damage or {}
-  for _, p in ipairs(damage.windows_broken or {}) do
+  for _, p in ipairs(damage.broken_windows or {}) do
     local w = state.home.structure.windows[key(p[1], p[2])]
     if w then w.broken = true end
   end
@@ -248,16 +261,21 @@ end
 
 function M.add_cold_cell(state)
   local h = state.home
-  if h.rooms.cold_cell then return true end
-  h.rooms.cold_cell = {
-    id = "cold_cell", name = "room.cold_cell.name", area = 6,
-    temp = h.rooms[h.default_room].temp, insulation = 2, frost = 100,
-    envelope = { wall = 10, hole = 0, window = 0, broken_window = 0, board = 0, door = 1, door_open = 0 },
+  if h.rooms[balance.thermal.cold_cell_room.id] then return true end
+  local host = h.rooms[h.default_room]
+  local cc = balance.thermal.cold_cell_room
+  h.rooms[cc.id] = {
+    id = cc.id, name = "room." .. cc.id .. ".name", area = cc.area,
+    temp = host.temp, insulation = cc.insulation, frost = 100,
+    envelope = cold_cell_envelope(),
     openings = {},
-    links = { { room = h.default_room, walls = 0, doors = 1, door_cells = {}, open_doors = 0 } },
+    links = { { room = h.default_room, walls = 0, doors = 1, door_cells = {}, open_doors = 0, cold_cell = true } },
     cold_cell = true,
   }
-  h.room_order[#h.room_order + 1] = "cold_cell"
+  -- mirror link so the host room exchanges heat with the cell too
+  host.links[#host.links + 1] = { room = cc.id, walls = 0, doors = 1, door_cells = {}, open_doors = 0, cold_cell = true }
+  table.sort(host.links, function(a, b) return a.room < b.room end)
+  h.room_order[#h.room_order + 1] = cc.id
   table.sort(h.room_order)
   h.cold_cell = true
   return true
@@ -268,8 +286,8 @@ function M.rebuild(state)
   local h = state.home
   for _, rid in ipairs(h.room_order) do
     local room = h.rooms[rid]
-    if rid == "cold_cell" then
-      room.envelope = { wall = 10, hole = 0, window = 0, broken_window = 0, board = 0, door = 1, door_open = 0 }
+    if room.cold_cell then
+      room.envelope = cold_cell_envelope()
     else
       local env = { wall = 0, hole = 0, window = 0, broken_window = 0, board = 0, door = 0, door_open = 0 }
       for _, op in ipairs(room.openings) do
@@ -315,6 +333,32 @@ function M.ambient_temp(state)
   return living and living.temp or weather.outdoor_temp(state)
 end
 
+-- True while a cooking/boiling job (recipe station hearth/hearth2) is actually progressing.
+function M.cooking_active(state)
+  local recipes = require("data.recipes")
+  for _, id in ipairs(util.sorted_keys(state.jobs or {})) do
+    local job = state.jobs[id]
+    if job.kind ~= "research" and not job.waiting and job.recipe then
+      local recipe = recipes.get(job.recipe)
+      local ch = state.party.chars[job.actor]
+      if recipe and (recipe.station == "hearth" or recipe.station == "hearth2")
+        and ch and not ch.dead and ch.status ~= "dead" and ch.job == id and ch.activity == "work" then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- The stove a cooking/boiling job runs on: first usable stove-class kind (same order as craft).
+function M.cooking_station(state)
+  for _, kind in ipairs({ "hearth", "hearth2", "woodstove" }) do
+    local st = M.usable_station(state, kind)
+    if st then return st end
+  end
+  return nil
+end
+
 function M.tick(state, minutes)
   local h = state.home
   local hours = minutes / 60
@@ -333,11 +377,11 @@ function M.tick(state, minutes)
       if st.kind == "electric_heater" then dH = dH + hum.sources.electric_heater end
       if st.kind == "woodstove" then dH = dH + hum.sources.woodstove end
       if st.kind == "propane_heater" then dH = dH + hum.sources.propane end
-      if st.kind == "hearth" or st.kind == "hearth2" then dH = dH + hum.sources.hearth end
       if st.kind == "snow_barrel" then dH = dH + hum.sources.snow_barrel end
-      if st.kind == "humidifier" and h.humidity < 60 then dH = dH + hum.sources.humidifier end
+      if st.kind == "humidifier" and st.powered and h.humidity < hum.humidifier_stop then dH = dH + hum.sources.humidifier end
     end
   end
+  if M.cooking_active(state) then dH = dH + hum.sources.hearth end
   h.humidity = util.clamp(h.humidity + dH * hours, hum.min, hum.max)
 
   -- frost

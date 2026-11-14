@@ -19,30 +19,34 @@ function M.room_temp(state, room_id)
   return weather.outdoor_temp(state)
 end
 
--- Total conductance of a room to outside + neighbours (W/C).
+-- Conductance of one inner link (W/C): inner walls + closed/open inner doors.
+function M.link_g(link)
+  local walls = link.walls or 0
+  local doors = link.doors or 0
+  local open = math.min(doors, link.open_doors or 0)
+  -- the cold cell has its own closed-door value (CONTENT 5.3)
+  local closed_g = link.cold_cell and T.cold_cell_door_g or T.g.inner_door_closed
+  return walls * T.g.inner_wall + (doors - open) * closed_g + open * T.g.inner_door_open
+end
+
+-- Envelope-only conductance of a room to the outdoors (W/C). Inner links are NOT included
+-- (CONTENT 6.2.1: Q_out = sum G_link (T - T_nb) + G_env (T - T_out)).
+-- Insulation multiplies walls, boards and roof/floor only; doors, windows and holes are unaffected.
 function M.room_g(state, room_id)
   local room = state.home.rooms[room_id]
   if not room then return 0 end
-  if room_id == "cold_cell" then
-    return 10.0  -- CONTENT §5.3: 6-cell cold cell, G ~= 10 W/C
-  end
   local env = room.envelope
   local mult = insulation_mult(room)
+  if room.cold_cell then mult = mult * (T.cold_cell_mult or 1.0) end
   local g = 0
   g = g + env.wall * T.g.wall * mult
-  g = g + env.hole * T.g.hole * mult
   g = g + env.board * T.g.board * mult
+  g = g + (room.area or 0) * T.g.roof_floor * mult
+  g = g + env.hole * T.g.hole
   g = g + env.window * T.g.window
   g = g + env.broken_window * T.g.broken_window
   g = g + env.door * T.g.door_closed
   g = g + env.door_open * T.g.door_open
-  g = g + room.area * T.g.roof_floor * mult
-  for _, link in ipairs(room.links or {}) do
-    local walls = link.walls or 0
-    local doors = math.max(0, (link.doors or 0) - (link.open_doors or 0))
-    local open = link.open_doors or 0
-    g = g + walls * T.g.inner_wall + doors * T.g.inner_door_closed + open * T.g.inner_door_open
-  end
   return g
 end
 
@@ -55,17 +59,23 @@ end
 -- Heat contributed by working stations in a room (W).
 function M.station_heat(state, room_id)
   local power = require("sim.power")
+  local home = require("sim.home")
   local total = 0
+  -- a stove in use for cooking/boiling gives extra heat (CONTENT 5.1: +400 W)
+  if home.cooking_active(state) then
+    local cs = home.cooking_station(state)
+    if cs and cs.room == room_id then total = total + balance.power.cooking_heat end
+  end
   for _, id in ipairs(util.sorted_keys(state.home.stations)) do
     local st = state.home.stations[id]
     if st.room == room_id and st.on and st.hp > 0 then
-      if st.kind == "hearth" then total = total + 600
-      elseif st.kind == "hearth2" then total = total + 750
-      elseif st.kind == "snow_barrel" then total = total + 300
-      elseif st.kind == "propane_heater" then total = total + 1800
-      elseif st.kind == "woodstove" then total = total + (st.level == "low" and 1000 or 2500)
-      elseif st.kind == "electric_heater" then
-        if power.device_powered(state, "f_electric_heater") then total = total + 800 end
+      local key = "f_" .. st.kind
+      if st.kind == "woodstove" and st.level == "low" then key = "f_woodstove_low" end
+      local def = balance.power.station[key]
+      if def and def.heat then
+        if st.kind ~= "electric_heater" or power.device_powered(state, id) then
+          total = total + def.heat
+        end
       end
     end
   end
@@ -91,17 +101,11 @@ function M.tick(state, minutes)
 
   for _, rid in ipairs(rooms) do
     local room = state.home.rooms[rid]
-    local g = M.room_g(state, rid)
     local q_in = M.station_heat(state, rid) + M.body_heat(state, rid)
-    local q_out = g * (temps[rid] - out)
+    local q_out = M.room_g(state, rid) * (temps[rid] - out)
     for _, link in ipairs(room.links or {}) do
-      local other = state.home.rooms[link.room]
-      if other then
-        local g_link = (link.walls or 0) * T.g.inner_wall
-          + math.max(0, (link.doors or 0) - (link.open_doors or 0)) * T.g.inner_door_closed
-          + (link.open_doors or 0) * T.g.inner_door_open
-        q_out = q_out + g_link * (temps[rid] - other.temp)
-      end
+      local nb = temps[link.room]
+      if nb then q_out = q_out + M.link_g(link) * (temps[rid] - nb) end
     end
     local c = M.heat_capacity(state, rid)
     local d = (q_in - q_out) / (c * 60) * minutes

@@ -39,23 +39,32 @@ local M = {
     energy_tired = 60,
     energy_exhausted = 30,
     energy_collapse = 10,
-    -- efficient multipliers
+    -- Efficiency multipliers (CONTENT 6.1). Band semantics, CONTENT names:
+    --   food/water `bands`: the multiplier applies while stat < `below` (hungry/thirsty
+    --   below 30, starving/parched below 15); the lowest matching band wins; stat == 0
+    --   ("饿昏"/dehydrated) uses `zero`.
+    --   energy `points`: linear interpolation between (energy, mult) points, 60 -> 30 is
+    --   1.0 -> 0.8 and 30 -> 10 is 0.8 -> 0.5; energy < 10 ("力竭") uses `exhausted`.
     eff = {
-      food = { { 30, 1.0 }, { 15, 0.9 }, { 0.0001, 0.8 }, { 0, 0.5 } },
-      water = { { 30, 1.0 }, { 15, 0.9 }, { 0.0001, 0.7 }, { 0, 0.4 } },
-      energy = { { 60, 1.0 }, { 30, 0.8 }, { 10, 0.5 }, { 0, 0.4 } },
+      food = { bands = { { below = 30, mult = 0.9 }, { below = 15, mult = 0.8 } }, zero = 0.5 },
+      water = { bands = { { below = 30, mult = 0.9 }, { below = 15, mult = 0.7 } }, zero = 0.4 },
+      energy = { points = { { 60, 1.0 }, { 30, 0.8 }, { 10, 0.5 } }, exhausted = 0.4 },
     },
     -- starvation / dehydration damage (CONTENT 6.1)
     food_zero_hp_per_24h = 25,
     food_zero_critical_hours = 72,
     water_zero_hp_per_12h = 25,
     water_zero_critical_hours = 36,
+    food_zero_hp_cap = 10, -- after the critical hours hp is clamped to the dying band
+    water_zero_hp_cap = 10,
     heat_recovery_minutes = 60, -- hot meal comfort window
   },
 
   -- --------------------------------------------------------------- health
   health = {
-    -- wound bands (hidden hp)
+    -- wound bands (hidden hp, CONTENT 6.4.1): healthy hp > `healthy`; light `light`..`healthy`;
+    -- heavy `heavy`..light-1; critical `critical`..heavy-1; hp <= 0 is dead.
+    max_hp = 100,
     healthy = 80,
     light = 41,
     heavy = 11,
@@ -67,15 +76,32 @@ local M = {
     bandage_hours = 12,
     heavy_bandage_hours = 24,
     critical_stabilized_heal = 1.0,
-    infection_chance_per_day = 0.15,
+    infection_chance_per_day = 0.15, -- heavy wounds; scaled by tick length (p = per_day * h / 24)
+    dying_cap_hp = 40,    -- body temp 0: counts as heavy, hp cap (CONTENT 6.2.3)
+    dying_cap_hours = 2,
+    painkiller_minutes = 480,
+    antiseptic_hours = 48,
+    stabilize_minutes = 120,
+    first_aid_stabilize_minutes = 180,
+    infection_daily_damage = 5, -- hp/day while infected -- M3 占位，非 CONTENT 数值
     antiseptic_infection_mult = 0.5,
+    -- stabilising a dying character (bandage): body temp is lifted to at least this -- M3 占位，非 CONTENT 数值
+    stabilize_body_temp = 20,
+    -- CONTENT 6.4.2 simplifies "body temp < 50 for over 4 h in the last 24 h" to the current value
+    pneumonia_low_body_temp = 50,
+    cold_medicine_no_pneumonia_hours = 24,
     -- diseases (CONTENT 6.4.2)
     cold = {
       base_per_hour = 0.0012,
       dry_ref = 40,
+      dry_scale = 20,
       wet_ref = 70,
+      wet_scale = 30,
+      wet_room = 10, -- the damp factor only applies in rooms colder than this
       cold_temp = 60,
       cold_room = 5,
+      f_cold_body = 2.5,   -- body temp < cold_temp
+      f_cold_sleep = 1.5,  -- sleeping in a room < cold_room
       spread_per_sick_per_hour = 0.01,
       hours = 72,
       med_hours = 36,
@@ -86,6 +112,7 @@ local M = {
       base_per_day = 0.04,
       low_temp_bonus = 0.08,
       dry_bonus = 0.06,
+      dry_humidity = 30,
       cap = 0.20,
       days = 8,
       hp_per_day = 6,
@@ -103,6 +130,7 @@ local M = {
       outdoor_e = -20,
       days = 6,
       med_days = 3,
+      treat_room_temp = 12, -- bandage treatment needs a room at least this warm (CONTENT 6.4.2)
       eff = 0.8,
       speed = 0.85,
       cap_hours = 72,
@@ -135,6 +163,28 @@ local M = {
     },
     elena_treat_mult = 1.5,
     elena_care_mult = 0.65,
+  },
+
+  -- ---------------------------------------------------------------- chars
+  -- Efficiency / capacity / speed multipliers (CONTENT 6.4.1, 6.4.3, 6.1, 6.2.3).
+  -- Disease eff/speed/capacity live in `health.<disease>`.
+  chars = {
+    -- starting worn gear is part of the opening kit (taken from nowhere only here)
+    start_wear = { coat = "winter_coat", hat = "wool_hat", gloves = "wool_gloves", boots = "snow_boots" },
+    wound_eff = { light = 0.9, heavy = 0.5, critical = 0.0 },
+    wound_speed = { light = 0.9, heavy = 0.6, critical = 0.0 },
+    wound_capacity = { light = 0.9, heavy = 0.6, critical = 0.6 },
+    multi_penalty = 0.9,    -- several wound/disease penalties: min * 0.9
+    painkiller_halving = 0.5, -- painkillers cut the wound/disease penalty by this fraction
+    morale_eff = { stable = 1.0, shaken = 0.95, low = 0.8, depressed = 0.6, breakdown = 0.0 },
+    morale_bands = { stable = 60, shaken = 45, low = 28, depressed = 10 }, -- lower bounds
+    -- body temp bands: stat >= `from` gives mult (first match wins)
+    temp_eff = { { 60, 1.0 }, { 40, 0.9 }, { 25, 0.7 }, { 10, 0.5 }, { 0, 0.3 } },
+    -- overweight rule (CONTENT gives none) -- M3 占位，非 CONTENT 数值:
+    -- speed x (1 - min(pen_cap, pen_per_ratio * over/cap)); over/cap >= stop_ratio -> speed 0
+    overweight = { pen_per_ratio = 0.5, pen_cap = 0.5, stop_ratio = 0.3 },
+    default_capacity = 15,
+    default_slots = 10,
   },
 
   -- -------------------------------------------------------------- thermal
@@ -187,7 +237,11 @@ local M = {
     initial_temp_offset = 2.0, -- rooms start at outdoor + this
     reference_insulation = 2, -- M3 reference shelter; M10 removes (starts at 0)
     heater_default_room = "living",
-    cold_cell_room = "cold_cell",
+    -- cold cell (CONTENT 5.3): 2x3 room, 10 outer wall edge cells, insulation II (extra x cold_cell_mult)
+    cold_cell_room = { id = "cold_cell", area = 6, wall = 10, insulation = 2 },
+    cold_cell_door_g = 0.6, -- closed door of the cold cell (CONTENT 5.3 table; not the 0.9 inner door)
+    -- body temp lowers mood -0.4/h when below bands.cold -- M3 占位，非 CONTENT 数值
+    cold_body_mood = -0.4,
   },
 
   -- ------------------------------------------------------------- humidity
@@ -204,6 +258,7 @@ local M = {
     frost_humidity = 70,
     frost_room = 5,
     frost_loss_per_hour = 0, -- M3 reference shelter: M10 restores 1.5
+    humidifier_stop = 60, -- the humidifier switches itself off (no power draw) at H >= this (CONTENT 6.3)
     frost_break = 50,
     sources = {
       electric_heater = -1.2,
@@ -240,6 +295,7 @@ local M = {
       lamp = 20,
       antenna = 0,
     },
+    cooking_heat = 400, -- extra W from the stove while a cooking/boiling job runs (CONTENT 5.1)
     fuel_energy = { firewood = 3.0, coal = 4.5, gasoline = 2.6, propane = 7.2 },
     -- heating stations (CONTENT 5.1/5.2)
     station = {
@@ -264,7 +320,12 @@ local M = {
     min_minutes = 1,
   },
 
-  -- Weather lives in data/weather.lua (CONTENT §6.5); this file keeps sim constants.
+  -- Weather tables live in data/weather.lua (CONTENT §6.5); this file keeps sim constants.
+  weather = {
+    linwei_error_mult = 0.5, -- forecast miss/error probabilities x0.5 (CONTENT 6.5.3)
+    linwei_lead_bonus = 1,   -- +1 day lead
+    linwei_min_level = 2,    -- only radio level >= 2
+  },
 
   -- ------------------------------------------------------- start of a run
   start_stash = {
@@ -323,9 +384,9 @@ local M = {
     travel_minutes = 90,
   },
 
-  -- M3 reference bot kit: the balance bot starts from a prepared household so the
-  -- 30-day acceptance run exercises the whole model. M10 replaces this with the
-  -- normal start_stash and tunes survival rates. Not used by the player game.
+  -- M3 reference bot kit: only given when a run is created with sim.new(seed, { kit = "bot" }).
+  -- The balance bot starts from a prepared household when a test/debug run asks for it. M10
+  -- removes it. Not used by the player game.
   bot_kit = {
     items = {
       planks = 20, nails = 60, scrap = 40, pipe = 10, components = 12,

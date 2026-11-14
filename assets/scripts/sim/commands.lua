@@ -7,13 +7,17 @@ local home = require("sim.home")
 local craft = require("sim.craft")
 local tech = require("sim.tech")
 local inventory = require("sim.inventory")
-local clock = require("sim.clock")
 local expedition = require("sim.expedition")
 local state_mod = require("sim.state")
 
 local M = {}
 
+local function finite(v)
+  return type(v) == "number" and v == v and v ~= math.huge and v ~= -math.huge
+end
+
 local function alive_char(state, cid)
+  if type(cid) ~= "string" then return nil, "no_char" end
   local ch = state.party.chars[cid]
   if not ch or ch.status ~= "alive" then return nil, "no_char" end
   return ch
@@ -75,9 +79,7 @@ handlers.activity = function(state, cmd)
   if not ch then return false, err end
   local ok_activity = { idle = true, work = true, sleep = true, guard = true, out = true }
   if not ok_activity[cmd.value] then return false, "bad_activity" end
-  if ch.job and cmd.value ~= "work" then
-    craft.cancel(state, ch.job)
-  end
+  -- Changing activity never cancels a job: it just pauses it (PLAN 9.1); only cancel_job drops it.
   ch.activity = cmd.value
   return true
 end
@@ -85,6 +87,9 @@ end
 handlers.craft = function(state, cmd)
   local ch, err = alive_char(state, cmd.char)
   if not ch then return false, err end
+  if cmd.room ~= nil and (type(cmd.room) ~= "string" or not state.home.rooms[cmd.room]) then
+    return false, "bad_room"
+  end
   return craft.start(state, cmd.recipe, ch.id, { room = cmd.room })
 end
 
@@ -146,6 +151,8 @@ handlers.night_roles = function(state, cmd)
   if state.clock.phase ~= "dusk" and state.clock.phase ~= "night" then
     return false, "not_dusk"
   end
+  if cmd.roles ~= nil and type(cmd.roles) ~= "table" then return false, "bad_roles" end
+  if cmd.target ~= nil and type(cmd.target) ~= "string" then return false, "bad_target" end
   local roles = {}
   for _, cid in ipairs(state.party.order) do
     local role = (cmd.roles or {})[cid] or "sleep"
@@ -160,59 +167,53 @@ end
 
 handlers.expedition = function(state, cmd)
   if state.clock.phase ~= "night" then return false, "not_night" end
-  local squad = cmd.squad or {}
-  if #squad < 1 or #squad > 2 then return false, "bad_squad" end
+  local squad = cmd.squad
+  if type(squad) ~= "table" then return false, "bad_squad" end
+  local n = 0
+  for _ in pairs(squad) do n = n + 1 end
+  if n < 1 or n > 2 or n ~= #squad then return false, "bad_squad" end
+  local seen = {}
   for _, cid in ipairs(squad) do
-    local ch = state.party.chars[cid]
-    if not ch or ch.status ~= "alive" then return false, "no_char" end
+    local ch, err = alive_char(state, cid)
+    if not ch then return false, err end
+    if seen[cid] then return false, "bad_squad" end
+    seen[cid] = true
+  end
+  if cmd.hours ~= nil and (not finite(cmd.hours) or cmd.hours < 0 or cmd.hours > 24) then
+    return false, "bad_hours"
   end
   local result = expedition.night(state, squad, cmd.hours)
   for _, cid in ipairs(squad) do
     local ch = state.party.chars[cid]
     if ch and ch.status == "alive" then ch.activity = "sleep" end
   end
-  return true, result
+  return true, nil, result
 end
 
-local function stop_work(state)
-  for _, cid in ipairs(state.party.order) do
-    local ch = state.party.chars[cid]
-    if ch and ch.job then
-      local job = state.jobs[ch.job]
-      if job then
-        if job.kind == "research" then tech.cancel(state, "phase") else craft.cancel(state, ch.job) end
-      else
-        ch.job = nil
-      end
-      if ch.activity == "work" then ch.activity = "idle" end
-    end
-  end
-end
+-- end_day lives in sim.lua (it needs sim.step); sim.command dispatches it.
 
-handlers.end_day = function(state)
-  if state.clock.phase ~= "day" then return false, "not_day" end
-  stop_work(state)
-  state.clock.minute = balance.time.dusk_start - 1
-  clock.tick(state)
-  state_mod.log(state, "day_ended", { minute = state.clock.minute })
-  return true
-end
-
-handlers.sleep_until_dawn = function(state)
-  -- convenience for bots: jump the clock, but still run sim steps in sim.step
-  return true
-end
-
+-- Returns ok, err, extra. Unknown kinds, garbage fields and handler faults give false, err and
+-- never raise; faults are also recorded in state.errors so audits see them.
 function M.run(state, cmd)
   if type(cmd) ~= "table" then return false, "bad_command" end
-  local kind = cmd.kind or cmd[1]
+  local kind = cmd.kind
+  if kind == nil then kind = cmd[1] end
+  if type(kind) ~= "string" then return false, "bad_command" end
   local fn = handlers[kind]
-  if not fn then return false, "unknown_command:" .. tostring(kind) end
-  local ok, err = fn(state, cmd)
-  if not ok then
-    state_mod.log(state, "command_failed", { kind = kind, err = err })
+  if not fn then return false, "unknown_command:" .. kind end
+  -- Inventory flow ledger: everything this command moves is booked under its kind (craft/research
+  -- override with finer reasons; equip/unequip are the bag <-> wear transfers the audit expects).
+  local prev_reason = inventory.set_reason(kind)
+  local called, ok, err, extra = pcall(fn, state, cmd)
+  inventory.set_reason(prev_reason)
+  if not called then
+    state_mod.error(state, "command " .. kind .. " raised: " .. tostring(ok))
+    return false, "internal_error"
   end
-  return ok, err
+  if not ok then
+    state_mod.log(state, "command_failed", { kind = kind, err = tostring(err) })
+  end
+  return ok and true or false, err, extra
 end
 
 function M.can(state, kind)

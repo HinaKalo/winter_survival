@@ -12,7 +12,7 @@ function _probe(t, dt)
     sim = require("sim.sim")
     bot = require("sim.bot")
     chars = require("sim.chars")
-    state = assert(sim.new(tonumber(os.getenv("BOT_SEED") or "12345")))
+    state = assert(sim.new(tonumber(os.getenv("BOT_SEED") or "12345"), { kit = "bot" }))
   end
   if state.clock.phase ~= "ending" and state.clock.day <= max_days then
     bot.play_day(state)
@@ -23,6 +23,9 @@ function _probe(t, dt)
     "deaths", tostring(report.deaths), "food_days", string.format("%.2f", report.food_days),
     "fuel_days", string.format("%.2f", report.fuel_days), "checksum", report.checksum)
   print("errors", #report.errors)
+  local audit = sim.audit(state)
+  print("audit problems", #audit)
+  for _, p in ipairs(audit) do print("AUDIT", p) end
   for _, e in ipairs(report.errors) do print("ERR", e) end
   for _, d in ipairs(report.dead) do print("DEAD", d.id, d.day, d.cause) end
   for _, c in ipairs(chars.alive(state)) do
@@ -42,5 +45,6 @@ function _probe(t, dt)
     print("ST", id, x.kind, x.room, "hp", x.hp, "on", tostring(x.on))
   end
   kit_probe.check("bot 30 days", report.day >= max_days or report.alive > 0)
+  kit_probe.check("bot ledger audit", #audit == 0)
   kit_probe.finish()
 end

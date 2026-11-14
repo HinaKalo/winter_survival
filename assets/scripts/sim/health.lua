@@ -16,9 +16,6 @@ local function hours(minutes) return minutes / 60 end
 function M.add_wound(state, ch, amount, cause)
   if not ch or ch.status ~= "alive" or amount <= 0 then return end
   ch.health.hp = math.max(0, ch.health.hp - amount)
-  if amount >= 45 and rng.float(state.rng.combat) < 0.25 then
-    ch.health.hp = math.min(ch.health.hp, H.critical_hp_cap or 40)
-  end
   state_mod.log(state, "wound", { char = ch.id, amount = amount, cause = cause or "unknown" })
   if ch.health.hp <= 0 then
     chars.kill(state, ch.id, cause or "wound")
@@ -27,7 +24,7 @@ end
 
 function M.heal(state, ch, amount)
   if not ch or ch.status ~= "alive" then return end
-  ch.health.hp = math.min(100, ch.health.hp + amount)
+  ch.health.hp = math.min(H.max_hp, ch.health.hp + amount)
 end
 
 function M.add_disease(state, ch, id)
@@ -59,7 +56,27 @@ function M.remove_disease(state, ch, id)
   return false
 end
 
--- One-minute tick: healing, bleeding, disease timers, cold/frostbite rolls.
+-- Per-tick probabilities (tick of `minutes` minutes), exposed for tests and balance.
+-- Frostbite: only outdoors (CONTENT 6.2.3 / PLAN 9.1); per hour 15%, +10% when E < -20.
+function M.frostbite_chance(state, ch, minutes)
+  if ch.activity ~= "out" then return 0 end
+  local h = hours(minutes)
+  local E = require("sim.thermal").effective_temp(state, ch)
+  local p = H.frostbite.per_hour * h
+  if E < H.frostbite.outdoor_e then p = p + H.frostbite.outdoor_extra_per_hour * h end
+  return p
+end
+
+-- Infection of a heavy wound: per_day * h / 24 per tick (antiseptic halves it).
+function M.infection_chance(ch, minutes)
+  local p = H.infection_chance_per_day * hours(minutes) / 24
+  if ch.health.antiseptic_hours and ch.health.antiseptic_hours > 0 then
+    p = p * H.antiseptic_infection_mult
+  end
+  return p
+end
+
+-- Health tick of `minutes` minutes (sim.lua uses 5): healing, bleeding, disease timers, cold/frostbite rolls.
 function M.tick(state, minutes)
   minutes = minutes or 1
   local h = hours(minutes)
@@ -72,19 +89,19 @@ function M.tick(state, minutes)
     -- natural healing / critical bleeding
     if wound == "healthy" then
       if ch.needs.food > 30 and ch.needs.water > 30 and rest then
-        health.hp = math.min(100, health.hp + H.heal.healthy * h)
+        health.hp = math.min(H.max_hp, health.hp + H.heal.healthy * h)
       end
     elseif wound == "light" then
       local rate = H.heal.light
       if health.bandage_hours > 0 then rate = rate * H.bandage_light_mult end
-      health.hp = math.min(100, health.hp + rate * h)
+      health.hp = math.min(H.max_hp, health.hp + rate * h)
     elseif wound == "heavy" then
       local rate = H.heal.heavy
       if health.heavy_bandage_hours > 0 then rate = rate + H.bandage_heavy_bonus end
-      health.hp = math.min(100, health.hp + rate * h)
+      health.hp = math.min(H.max_hp, health.hp + rate * h)
     elseif wound == "critical" then
       if health.stabilized_until and health.stabilized_until > state.clock.day * 1440 + state.clock.minute then
-        health.hp = math.min(100, health.hp + H.critical_stabilized_heal * h)
+        health.hp = math.min(H.max_hp, health.hp + H.critical_stabilized_heal * h)
       else
         health.hp = math.max(0, health.hp + H.heal.critical * h)
       end
@@ -101,8 +118,8 @@ function M.tick(state, minutes)
       health.hp = math.max(0, health.hp - balance.thermal.hypothermia_hp_per_hour * h)
       if ch.needs.temp <= balance.thermal.bands.dying then
         health.critical_hours = (health.critical_hours or 0) + h
-        if health.critical_hours >= 2 then
-          health.hp = math.min(health.hp, 40)
+        if health.critical_hours >= H.dying_cap_hours then
+          health.hp = math.min(health.hp, H.dying_cap_hp)
         end
       end
     else
@@ -110,7 +127,8 @@ function M.tick(state, minutes)
     end
 
     -- disease timers
-    for id, d in pairs(health.disease) do
+    for _, id in ipairs(util.sorted_keys(health.disease)) do
+      local d = health.disease[id]
       if id == "cold" then
         d.hours = d.hours - h
         if d.hours <= 0 then health.disease[id] = nil end
@@ -134,28 +152,22 @@ function M.tick(state, minutes)
       end
     end
 
-    -- cold / frostbite probability, evaluated per minute
-    local E = thermal.effective_temp(state, ch)
+    -- frostbite: body temp < trigger for >= 30 min, outdoors only
     if ch.needs.temp < H.frostbite.trigger_temp then
       health.frost_hours = (health.frost_hours or 0) + h
     else
       health.frost_hours = 0
     end
     if health.frost_hours >= H.frostbite.trigger_minutes / 60 then
-      local p = H.frostbite.per_hour / 60
-      if E < H.frostbite.outdoor_e then p = p + H.frostbite.outdoor_extra_per_hour / 60 end
-      if rng.float(state.rng.combat) < p then
+      local p = M.frostbite_chance(state, ch, minutes)
+      if p > 0 and rng.float(state.rng.health) < p then
         M.add_disease(state, ch, "frostbite")
       end
     end
 
     -- infection of heavy wounds
     if wound == "heavy" and not health.infection then
-      local p = H.infection_chance_per_day / 1440
-      if health.antiseptic_hours and health.antiseptic_hours > 0 then
-        p = p * H.antiseptic_infection_mult
-      end
-      if rng.float(state.rng.combat) < p then
+      if rng.float(state.rng.health) < M.infection_chance(ch, minutes) then
         health.infection = true
         state_mod.log(state, "infection", { char = ch.id })
       end
@@ -174,26 +186,29 @@ end
 function M.daily(state)
   local home = state.home
   local H2 = balance.health
-  local total_sick = 0
+  -- contagion is per room (CONTENT 6.4.2: +1%/h per sick person in the SAME room)
+  local sick_in_room = {}
   for _, ch in ipairs(chars.alive(state)) do
-    if ch.health.disease.cold then total_sick = total_sick + 1 end
+    if ch.health.disease.cold and ch.activity ~= "out" then
+      sick_in_room[ch.room] = (sick_in_room[ch.room] or 0) + 1
+    end
   end
   for _, ch in ipairs(chars.alive(state)) do
     -- cold
     if not ch.health.disease.cold then
-      local f_dry = 1 + math.max(0, 40 - home.humidity) / 20
+      local f_dry = 1 + math.max(0, H2.cold.dry_ref - home.humidity) / H2.cold.dry_scale
       local f_wet = 1
       local room_t = require("sim.thermal").room_temp(state, ch.room)
-      if home.humidity > 70 and room_t < 10 then
-        f_wet = 1 + (home.humidity - 70) / 30
+      if home.humidity > H2.cold.wet_ref and room_t < H2.cold.wet_room then
+        f_wet = 1 + (home.humidity - H2.cold.wet_ref) / H2.cold.wet_scale
       end
       local f_cold = 1
-      if ch.needs.temp < H2.cold.cold_temp then f_cold = 2.5 end
-      if ch.activity == "sleep" and room_t < H2.cold.cold_room then f_cold = f_cold * 1.5 end
+      if ch.needs.temp < H2.cold.cold_temp then f_cold = H2.cold.f_cold_body end
+      if ch.activity == "sleep" and room_t < H2.cold.cold_room then f_cold = f_cold * H2.cold.f_cold_sleep end
       local trait = (ch.traits.illness_risk or 1)
       local p_day = (H2.cold.base_per_hour * 24) * f_dry * f_wet * f_cold * trait
-        + total_sick * H2.cold.spread_per_sick_per_hour * 24
-      if rng.float(state.rng.combat) < p_day then
+        + (ch.activity ~= "out" and sick_in_room[ch.room] or 0) * H2.cold.spread_per_sick_per_hour * 24
+      if rng.float(state.rng.health) < p_day then
         M.add_disease(state, ch, "cold")
       end
     end
@@ -201,16 +216,16 @@ function M.daily(state)
     local cold = ch.health.disease.cold
     if cold and not ch.health.disease.pneumonia and (cold.no_pneumonia or 0) <= 0 then
       local p = H2.pneumonia.base_per_day
-      if ch.needs.temp < 50 then p = p + H2.pneumonia.low_temp_bonus end
-      if home.humidity < 30 then p = p + H2.pneumonia.dry_bonus end
+      if ch.needs.temp < H2.pneumonia_low_body_temp then p = p + H2.pneumonia.low_temp_bonus end
+      if home.humidity < H2.pneumonia.dry_humidity then p = p + H2.pneumonia.dry_bonus end
       p = math.min(H2.pneumonia.cap, p)
-      if rng.float(state.rng.combat) < p then
+      if rng.float(state.rng.health) < p then
         M.add_disease(state, ch, "pneumonia")
       end
     end
     -- infection progress
     if ch.health.infection == true then
-      M.add_wound(state, ch, 5, "infection")
+      M.add_wound(state, ch, H.infection_daily_damage, "infection")
     end
   end
 end
@@ -229,11 +244,22 @@ function M.treat(state, patient, actor, item_id)
   local wound = chars.wound(patient)
   local ok = false
 
-  if item_id == "bandage" then
+  local frost = patient.health.disease.frostbite
+  local frost_open = frost ~= nil and not frost.treated
+  local warm_room = require("sim.thermal").room_temp(state, patient.room) >= H.frostbite.treat_room_temp
+  if item_id == "bandage" and frost_open and wound ~= "critical" and wound ~= "heavy"
+    and (warm_room or wound == "healthy") then
+    -- frostbite (CONTENT 6.4.2): room >= 12 C + one bandage; stops the 72 h hp cap
+    if not warm_room then return false, "too_cold" end
+    inventory.remove(src, item_id, 1)
+    frost.treated = true
+    frost.cap_hours = 0
+    ok = true
+  elseif item_id == "bandage" then
     if wound == "critical" then
       inventory.remove(src, item_id, 1)
-      patient.health.stabilized_until = state.clock.day * 1440 + state.clock.minute + 120
-      patient.needs.temp = math.max(patient.needs.temp, 20)
+      patient.health.stabilized_until = state.clock.day * 1440 + state.clock.minute + H.stabilize_minutes
+      patient.needs.temp = math.max(patient.needs.temp, H.stabilize_body_temp)
       ok = true
     elseif wound == "heavy" then
       local need = elena and 1 or 2
@@ -252,28 +278,30 @@ function M.treat(state, patient, actor, item_id)
   elseif item_id == "antibiotics" then
     local disease = patient.health.disease.pneumonia
     if not disease then return false, "no_pneumonia" end
+    -- at most one dose per day (CONTENT 6.4.2)
+    local today = state.clock.day
+    if disease.last_dose_day == today then return false, "dose_today" end
     inventory.remove(src, item_id, 1)
+    disease.last_dose_day = today
     disease.doses = (disease.doses or 0) + 1
     local need = elena and H.pneumonia.elena_doses or H.pneumonia.doses
-    if disease.doses >= need then
-      patient.health.disease.pneumonia = nil
-      ok = true
-    end
+    if disease.doses >= need then patient.health.disease.pneumonia = nil end
+    ok = true
   elseif item_id == "cold_medicine" then
     local cold = patient.health.disease.cold
     if not cold then return false, "no_cold" end
     inventory.remove(src, item_id, 1)
     cold.hours = math.min(cold.hours, H.cold.med_hours)
-    cold.no_pneumonia = 24
+    cold.no_pneumonia = H.cold_medicine_no_pneumonia_hours
     ok = true
   elseif item_id == "painkillers" then
     if wound == "healthy" then return false, "not_injured" end
     inventory.remove(src, item_id, 1)
-    patient.health.painkiller_until = 480
+    patient.health.painkiller_until = H.painkiller_minutes
     ok = true
   elseif item_id == "antiseptic" then
     inventory.remove(src, item_id, 1)
-    patient.health.antiseptic_hours = 48
+    patient.health.antiseptic_hours = H.antiseptic_hours
     patient.health.infection = false
     local frost = patient.health.disease.frostbite
     if frost then
@@ -285,11 +313,11 @@ function M.treat(state, patient, actor, item_id)
   elseif item_id == "first_aid_kit" then
     inventory.remove(src, item_id, 1)
     if wound == "critical" then
-      patient.health.stabilized_until = state.clock.day * 1440 + state.clock.minute + 180
+      patient.health.stabilized_until = state.clock.day * 1440 + state.clock.minute + H.first_aid_stabilize_minutes
     end
     patient.health.bandage_hours = H.bandage_hours
     patient.health.heavy_bandage_hours = H.heavy_bandage_hours
-    patient.health.painkiller_until = 480
+    patient.health.painkiller_until = H.painkiller_minutes
     patient.health.infection = false
     ok = true
   else

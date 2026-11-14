@@ -26,6 +26,30 @@ function M.room_temp(state, ch)
   return thermal.room_temp(state, ch.room)
 end
 
+-- True when a bed station stands in the character's room (read-only home query).
+local function has_bed(state, ch)
+  local stations = state.home and state.home.stations or {}
+  for _, id in ipairs(util.sorted_keys(stations)) do
+    local st = stations[id]
+    if st.kind == "bed" and st.room == ch.room then return true end
+  end
+  return false
+end
+M.has_bed = has_bed
+
+-- Sleep energy per hour (CONTENT 6.1): bed and room >= 10 C -> 14; room < 5 C -> 7;
+-- otherwise 9 (also a daytime nap); dry air (humidity < 30) multiplies by 0.8.
+function M.sleep_gain(state, ch, room_t)
+  local S = N.sleep_energy
+  local gain
+  if room_t < 5 then gain = S.cold
+  elseif has_bed(state, ch) and room_t >= 10 and state.clock.phase ~= "day" then gain = S.warm
+  elseif state.clock.phase == "day" then gain = S.nap
+  else gain = S.normal end
+  if state.home.humidity < balance.humidity.dry_sleep then gain = gain * N.dry_sleep_mult end
+  return gain
+end
+
 -- Feed one item to a character. Item is taken from the character bag, then the stash.
 function M.consume_item(state, ch, item_id)
   local def = items.get(item_id)
@@ -56,7 +80,7 @@ function M.consume_item(state, ch, item_id)
     ch.flags.alcohol_minutes = 120
   end
   if poison > 0 then
-    local r = state.rng.combat
+    local r = state.rng.health
     if require("core.rng").float(r) < poison then
       require("sim.health").add_disease(state, ch, "food_poison")
     end
@@ -144,10 +168,7 @@ function M.tick(state, minutes)
 
     if act == "sleep" then
       local room_t = thermal.room_temp(state, ch.room)
-      local gain = N.sleep_energy.normal
-      if room_t >= 10 then gain = N.sleep_energy.warm
-      elseif room_t < 5 then gain = N.sleep_energy.cold end
-      if state.home.humidity < balance.humidity.dry_sleep then gain = gain * N.dry_sleep_mult end
+      local gain = M.sleep_gain(state, ch, room_t)
       ch.needs.energy = clamp100(ch.needs.energy + gain * hours)
     elseif act == "guard" then
       ch.needs.energy = clamp100(ch.needs.energy + N.guard_energy * hours)
@@ -156,7 +177,7 @@ function M.tick(state, minutes)
     end
 
     -- food poisoning drains extra food/water
-    local fp = ch.health.diseases and ch.health.diseases.food_poison
+    local fp = ch.health.disease and ch.health.disease.food_poison
     if fp then
       ch.needs.food = clamp100(ch.needs.food + balance.health.food_poison.extra_food_per_hour * hours)
       ch.needs.water = clamp100(ch.needs.water + balance.health.food_poison.extra_water_per_hour * hours)
@@ -183,7 +204,7 @@ function M.tick(state, minutes)
     if room_t < 8 then mood_d = mood_d - 0.8 end
     if room_t >= 16 then mood_d = mood_d + 0.5 end
     if ch.needs.food < N.food_hungry then mood_d = mood_d - 0.5 end
-    if ch.needs.temp < balance.thermal.bands.cold then mood_d = mood_d - 0.4 end
+    if ch.needs.temp < balance.thermal.bands.cold then mood_d = mood_d + balance.thermal.cold_body_mood end
     if ch.hot_meal_minutes > 0 then
       ch.hot_meal_minutes = math.max(0, ch.hot_meal_minutes - minutes)
     end
@@ -194,35 +215,32 @@ function M.tick(state, minutes)
     end
     ch.needs.mood = clamp100(ch.needs.mood + mood_d * hours)
 
-    -- starvation / dehydration timers (CONTENT 6.1)
-    if ch.needs.food <= 0 then
-      ch.health.starve_hours = (ch.health.starve_hours or 0) + hours
-      while ch.health.starve_hours >= 24 do
-        ch.health.starve_hours = ch.health.starve_hours - 24
-        health.add_wound(state, ch, N.food_zero_hp_per_24h, "starvation")
+    -- starvation / dehydration timers (CONTENT 6.1). Periodic hp loss applies until the
+    -- critical window; from then on hp is clamped into the dying band (<= cap) and the
+    -- bleeding in health.tick takes over (no further periodic wounds, so no double hit).
+    local function starve(zero, hours_key, total_key, step, dmg, crit_hours, cap, cause)
+      if not zero then
+        ch.health[hours_key] = 0
+        ch.health[total_key] = 0
+        return
       end
-      if (ch.health.starve_total or 0) + hours >= N.food_zero_critical_hours then
-        ch.health.critical_cause = "starvation"
+      ch.health[hours_key] = (ch.health[hours_key] or 0) + hours
+      ch.health[total_key] = (ch.health[total_key] or 0) + hours
+      if ch.health[total_key] >= crit_hours - 1e-9 then
+        ch.health.critical_cause = cause
+        ch.health[hours_key] = 0
+        if ch.status == "alive" and ch.health.hp > cap then ch.health.hp = cap end
+        return
       end
-      ch.health.starve_total = (ch.health.starve_total or 0) + hours
-    else
-      ch.health.starve_hours = 0
-      ch.health.starve_total = 0
+      while ch.health[hours_key] >= step - 1e-9 and ch.status == "alive" do
+        ch.health[hours_key] = ch.health[hours_key] - step
+        health.add_wound(state, ch, dmg, cause)
+      end
     end
-    if ch.needs.water <= 0 then
-      ch.health.thirst_hours = (ch.health.thirst_hours or 0) + hours
-      while ch.health.thirst_hours >= 12 do
-        ch.health.thirst_hours = ch.health.thirst_hours - 12
-        health.add_wound(state, ch, N.water_zero_hp_per_12h, "dehydration")
-      end
-      if (ch.health.thirst_total or 0) + hours >= N.water_zero_critical_hours then
-        ch.health.critical_cause = "dehydration"
-      end
-      ch.health.thirst_total = (ch.health.thirst_total or 0) + hours
-    else
-      ch.health.thirst_hours = 0
-      ch.health.thirst_total = 0
-    end
+    starve(ch.needs.food <= 0, "starve_hours", "starve_total", 24, N.food_zero_hp_per_24h,
+      N.food_zero_critical_hours, N.food_zero_hp_cap, "starvation")
+    starve(ch.needs.water <= 0, "thirst_hours", "thirst_total", 12, N.water_zero_hp_per_12h,
+      N.water_zero_critical_hours, N.water_zero_hp_cap, "dehydration")
   end
 end
 
