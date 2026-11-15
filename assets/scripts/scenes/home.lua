@@ -135,13 +135,6 @@ local function fit_zoom()
   return math.max(0.3, math.min(1.0, avail / ext))
 end
 
-local function util_sorted(t)
-  local ids = {}
-  for id in pairs(t) do ids[#ids + 1] = id end
-  table.sort(ids)
-  return ids
-end
-
 local function despawn_map_entities()
   if not map_state then return end
   for _, d in pairs(map_state.doors_by_key or {}) do
@@ -211,14 +204,7 @@ end
 local function sync_model(force)
   if not M.model then return end
   local state = M.session.state
-  local parts = { M.view_floor, tostring(state.home.rubble or 0) }
-  for _, id in ipairs(util_sorted(state.home.stations)) do
-    local st = state.home.stations[id]
-    if st.kind == "woodstove" or st.kind == "hearth" then
-      parts[#parts + 1] = id .. (st.on and st.hp > 0 and "1" or "0")
-    end
-  end
-  local sig = table.concat(parts, "|")
+  local sig = M.view_floor .. "|" .. home3d.signature(state)
   if not force and sig == model_sig then return end
   model_sig = sig
   local vis = home3d.visibility(model_names, M.view_floor, state)

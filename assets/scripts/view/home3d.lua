@@ -7,6 +7,8 @@ local ORDER = { "DRESS_B1_", "DRESS_F1_", "DRESS_F2_", "B1_", "F1_", "F2_" }
 
 local PAIR_KIND = { F1_woodstove = "woodstove", F1_hearth = "hearth" }
 
+local FIXED_KIND = { F1_electric_heater = "electric_heater", F1_generator = "generator", F1_humidifier = "humidifier" }
+
 local function starts(name, p) return name:sub(1, #p) == p end
 
 local function floor_of(name)
@@ -21,6 +23,19 @@ local function station_on(state, kind)
     if st.kind == kind and st.on and st.hp > 0 then return true end
   end
   return false
+end
+
+local function station_fixed(state, kind)
+  for _, st in pairs(state.home and state.home.stations or {}) do
+    if st.kind == kind and st.hp > 0 then return true end
+  end
+  return false
+end
+
+local function window_boarded(state, floor_prefix, x, y)
+  local key = (floor_prefix == "F1" and "" or floor_prefix .. ":") .. x .. "," .. y
+  local w = state.home and state.home.structure and state.home.structure.windows and state.home.structure.windows[key]
+  return w ~= nil and w.boarded == true
 end
 
 local function rubble_shown(state, k)
@@ -52,9 +67,42 @@ function M.node_visible(name, view_floor, state)
       return (suffix == "on") == on
     end
   end
+  local fbase = name:match("^(.-)_fixed$")
+  if fbase and FIXED_KIND[fbase] then return station_fixed(state, FIXED_KIND[fbase]) end
+  local wkind = FIXED_KIND[name]
+  if wkind then return not station_fixed(state, wkind) end
+  local wf, wx, wy = name:match("^(%u%d)_window_board_(%d+)_(%d+)$")
+  if wf then return window_boarded(state, wf, wx, wy) end
+  if name == "F1_hole_board_17_0" then
+    local h = state.home and state.home.structure and state.home.structure.holes and state.home.structure.holes["17,0"]
+    return h ~= nil and h.boarded == true
+  end
   local k = name:match("^F1_rubble_0(%d)$")
   if k then return rubble_shown(state, tonumber(k)) end
   return true
+end
+
+-- Everything that changes which nodes are shown, as a string (the scene re-syncs the model when it changes).
+function M.signature(state)
+  local h = state.home or {}
+  local parts = { tostring(h.rubble or 0) }
+  local ids = {}
+  for id in pairs(h.stations or {}) do ids[#ids + 1] = id end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local st = h.stations[id]
+    parts[#parts + 1] = id .. (st.on and "1" or "0") .. (st.hp > 0 and "1" or "0")
+  end
+  local keys = {}
+  local structure = h.structure or {}
+  for k in pairs(structure.windows or {}) do keys[#keys + 1] = k end
+  table.sort(keys)
+  for _, k in ipairs(keys) do parts[#parts + 1] = "w" .. k .. (structure.windows[k].boarded and "1" or "0") end
+  keys = {}
+  for k in pairs(structure.holes or {}) do keys[#keys + 1] = k end
+  table.sort(keys)
+  for _, k in ipairs(keys) do parts[#parts + 1] = "h" .. k .. (structure.holes[k].boarded and "1" or "0") end
+  return table.concat(parts, "|")
 end
 
 function M.visibility(names, view_floor, state)
