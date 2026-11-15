@@ -113,3 +113,14 @@
 - luatest：`mise exec -- zig build luatest`
 - probe：参考 `ci/` 里 home_floors 的调用
 - Python：`python3 -m unittest discover -s tests/tools -t .`
+
+## 6. 审查记录（r1，两份并行审查都通过）
+
+- 代码切片（oc-gpt）：PASS。
+  - 补强建议（P3）：`signature` 没有编码 `st.kind` 和档位。现在设施的种类不会变，所以没有影响；M6 加入升级 / tier 以后必须补上，已写进 M6 计划 §11。
+  - 每帧都会分配新表，现在约 77 µs，可以接受。
+- 资产切片（codex）：PASS。
+  - fixed.py 连跑两次，结果一致。
+  - 除两块被替换的旧窗板外，原有物件都没有改动。
+  - 导出参数和 dress.py 一致。
+- **重建顺序**：`dress.py` 打开的是仓库外的 `ranch_a_optimized/house.blend`。以后如果重跑 dress.py，跑完必须在仓库里的 house.blend 上再跑一次 `fixed.py`，否则这一轮加的修复家具和木板会丢。
