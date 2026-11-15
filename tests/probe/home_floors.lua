@@ -170,6 +170,23 @@ local function scenario()
   local back = wait_until(40, function() return home.actor_floor[cid] == "F1" end)
   probe.check("they climb back to 1F for the cold cell", back)
 
+  -- M5-FIX: repaired stations and boards show up on the real model (docs/M5-FIX-PLAN.md §3)
+  for _ = 1, 3 do
+    if home.view_floor == "B1" then tap("floor_up") elseif home.view_floor == "F2" then tap("floor_down") end
+  end
+  probe.check("viewing 1F for the repair checks", home.view_floor == "F1")
+  probe.check("generator wreck shown while broken",
+    vis(home, "F1_generator") == true and vis(home, "F1_generator_fixed") == false)
+  probe.check("window board hidden before boarding", vis(home, "F1_window_board_19_3") == false)
+  require("sim.home").repair_station(s.state, "f_generator")
+  s.state.home.structure.windows["19,3"].boarded = true
+  s.state.home.structure.holes["17,0"].boarded = true
+  wait(0.3)
+  probe.check("repaired generator replaces the wreck",
+    vis(home, "F1_generator_fixed") == true and vis(home, "F1_generator") == false)
+  probe.check("boarded window shows its board", vis(home, "F1_window_board_19_3") == true)
+  probe.check("boarded hole shows its board", vis(home, "F1_hole_board_17_0") == true)
+
   -- time still runs and nothing broke
   local m0 = s.state.clock.minute
   wait(1.0)
