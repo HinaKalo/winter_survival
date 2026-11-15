@@ -148,31 +148,38 @@ def generator():
 # ---------------------------------------------------------------- electric heater
 def heater():
     b = Builder()
-    # wooden board the radiator is wired to
-    b.box((0, 0.15, 0.45), (0.85, 0.04, 0.78), 'wood_2', (0, 0, 3))
-    b.box((0.05, 0.12, 0.05), (0.9, 0.2, 0.04), 'wood_3', (0, 0, -3))  # base plank
-    for x, y, h, m in [(-0.3, 0.1, 0.05, 'concrete_3'), (0.32, 0.12, 0.06, 'concrete_2'), (0.0, 0.14, 0.04, 'wood_1')]:
-        b.box((x, y, 0.0 + h / 2 - 0.02), (0.14, 0.12, h + 0.04), m)
-    # oil radiator: fins, two missing, one replaced with a different one
-    for i in range(8):
-        if i in (3, 6):
+    # two wooden blocks shim the feet on the left side; right feet are plain stubs
+    b.box((-0.36, 0.0, 0.05), (0.16, 0.24, 0.1), 'wood_3', (0, 0, 6))
+    b.box((-0.36, 0.0, 0.13), (0.14, 0.22, 0.06), 'wood_1', (0, 0, -8))
+    b.box((0.36, 0.0, 0.04), (0.12, 0.22, 0.08), 'concrete_2')
+    # oil radiator: 9 thick fins packed together, one missing, two dented (shorter), one replacement in another colour
+    for i in range(9):
+        if i == 6:
             continue
-        x = -0.34 + i * 0.097
-        m = 'rust_3' if i == 5 else 'concrete_4'
-        b.box((x, 0.0, 0.43), (0.07, 0.2, 0.58), m, (0, 0, 0))
-    b.box((0, 0.0, 0.76), (0.82, 0.2, 0.05), 'rust_1')  # top rail
-    b.box((0, 0.0, 0.16), (0.82, 0.2, 0.05), 'rust_1')  # bottom rail
-    b.box((0.37, -0.12, 0.62), (0.1, 0.06, 0.1), 'rust_4', (0, 0, 20))  # crooked thermostat housing
-    b.cyl((0.37, -0.17, 0.62), 0.03, 0.05, 'wood_4', (90, 0, 0), 6)  # knob
-    # wire lashing around the radiator and the board (iron wire = dark, tape = blue)
-    for z, m in [(0.28, 'outline_1'), (0.6, 'cloth_a_2')]:
-        b.box((0.0, 0.07, z), (0.88, 0.26, 0.025), m, (0, 0, 0))
-    # exposed wiring out the back
-    b.box((-0.38, 0.19, 0.3), (0.02, 0.03, 0.4), 'outline_1', (4, 0, 0))
-    b.box((-0.3, 0.2, 0.1), (0.2, 0.02, 0.02), 'rust_4', (0, 0, -12))
-    b.box((-0.2, 0.2, 0.06), (0.14, 0.03, 0.03), 'outline_1', (0, 0, 20))
-    b.box((-0.45, 0.2, 0.52), (0.1, 0.05, 0.1), 'cloth_a_1', (0, 0, 15))  # wrapped rag
-    tilt_about(b, (0, 0, 0), -3, 4, 0)
+        x = -0.42 + i * 0.105
+        h = 0.62
+        z0 = 0.2
+        if i in (2, 7):
+            h = 0.5
+        m = 'concrete_3'
+        if i == 4:
+            m = 'rust_3'  # replacement fin
+        b.box((x, 0.0, z0 + h / 2), (0.1, 0.22, h), m, (0, 0, 0 if i not in (2, 7) else 3))
+    b.box((0, 0.0, 0.84), (0.98, 0.24, 0.05), 'concrete_2')  # top header
+    b.box((0, 0.0, 0.17), (0.98, 0.24, 0.05), 'concrete_2')  # bottom header
+    b.box((0.55 - 0.05, 0.0, 0.5), (0.04, 0.2, 0.5), 'rust_2', (0, 0, 0))  # side panel, different colour
+    # thermostat knob on the top
+    b.box((0.38, -0.02, 0.89), (0.12, 0.1, 0.06), 'rust_4', (0, 0, 15))
+    b.cyl((0.38, -0.02, 0.94), 0.035, 0.05, 'wood_4', (0, 0, 0), 6)
+    # tape bands wrapped round the body
+    b.box((0, 0.0, 0.32), (1.0, 0.25, 0.05), 'wood_4')
+    b.box((0, 0.0, 0.72), (1.0, 0.25, 0.045), 'cloth_a_2')
+    # bare cord from the back down to the floor, taped splice
+    b.box((-0.3, 0.13, 0.78), (0.03, 0.03, 0.2), 'outline_1', (0, 0, 0))
+    b.box((-0.3, 0.2, 0.58), (0.03, 0.03, 0.5), 'outline_1', (8, 0, 0))
+    b.box((-0.3, 0.22, 0.45), (0.06, 0.06, 0.12), 'wood_4')  # splice tape
+    b.box((-0.2, 0.3, 0.02), (0.3, 0.03, 0.02), 'outline_1', (0, 0, -14))
+    tilt_about(b, (0, 0, 0), -2, 4, 0)
     at(b, 15.57, -6.52)
     return b.build('F1_electric_heater_fixed', 'F1', 0.0)
 
